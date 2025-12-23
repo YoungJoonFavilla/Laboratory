@@ -1,0 +1,20 @@
+{
+    "name": "NavMesh2D.Editor",
+    "rootNamespace": "NavMesh2D.Editor",
+    "references": [
+        "NavMesh2D.Runtime",
+        "NavMesh2D.Demo",
+        "FixedMathSharp.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

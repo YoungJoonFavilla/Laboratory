@@ -1,0 +1,16 @@
+{
+    "name": "NavMesh2D.Runtime",
+    "rootNamespace": "NavMesh2D",
+    "references": [
+        "FixedMathSharp.Runtime"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
