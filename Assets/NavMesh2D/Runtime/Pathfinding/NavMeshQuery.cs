@@ -80,6 +80,8 @@ namespace NavMesh2D.Pathfinding
             result.TrianglePath = astarResult.TrianglePath;
             result.Portals = astarResult.Portals;
 
+            UnityEngine.Debug.Log($"[NavMeshQuery] A* result: TrianglePath.Count={astarResult.TrianglePath?.Count ?? -1}, Portals.Count={astarResult.Portals?.Count ?? -1}");
+
             // 2. 같은 삼각형 내라면 직선 경로
             if (astarResult.TrianglePath.Count == 1)
             {

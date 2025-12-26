@@ -17,7 +17,10 @@ namespace NavMesh2D.Editor
         private SerializedProperty _boundaryMaxProp;
         private SerializedProperty _obstaclesProp;
         private SerializedProperty _visualizerProp;
+        private SerializedProperty _navMeshAssetProp;
         private SerializedProperty _autoRebuildProp;
+        private SerializedProperty _startPointProp;
+        private SerializedProperty _endPointProp;
 
         private int _selectedObstacleIndex = -1;
         private int _selectedVertexIndex = -1;
@@ -32,7 +35,10 @@ namespace NavMesh2D.Editor
             _boundaryMaxProp = serializedObject.FindProperty("_boundaryMax");
             _obstaclesProp = serializedObject.FindProperty("_obstacles");
             _visualizerProp = serializedObject.FindProperty("_visualizer");
+            _navMeshAssetProp = serializedObject.FindProperty("_navMeshAsset");
             _autoRebuildProp = serializedObject.FindProperty("_autoRebuildOnChange");
+            _startPointProp = serializedObject.FindProperty("_startPoint");
+            _endPointProp = serializedObject.FindProperty("_endPoint");
 
             SceneView.duringSceneGui += OnSceneGUI;
         }
@@ -59,6 +65,7 @@ namespace NavMesh2D.Editor
             // Components
             EditorGUILayout.LabelField("Components", EditorStyles.boldLabel);
             EditorGUILayout.PropertyField(_visualizerProp);
+            EditorGUILayout.PropertyField(_navMeshAssetProp, new GUIContent("NavMesh Asset", "할당하면 .asset 파일에 저장됨"));
             EditorGUILayout.PropertyField(_autoRebuildProp);
 
             EditorGUILayout.Space();
@@ -104,6 +111,25 @@ namespace NavMesh2D.Editor
             if (GUILayout.Button("Rebuild NavMesh"))
             {
                 _demo.RebuildNavMesh();
+            }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.Space();
+
+            // Pathfinding Test
+            EditorGUILayout.LabelField("Pathfinding Test", EditorStyles.boldLabel);
+            EditorGUILayout.PropertyField(_startPointProp);
+            EditorGUILayout.PropertyField(_endPointProp);
+
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("Calculate Path"))
+            {
+                _demo.CalculatePath();
+            }
+            if (GUILayout.Button("Swap"))
+            {
+                _demo.SwapStartEnd();
+                serializedObject.Update();
             }
             EditorGUILayout.EndHorizontal();
 

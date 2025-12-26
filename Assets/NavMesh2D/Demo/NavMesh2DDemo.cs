@@ -1,9 +1,11 @@
 using System.Collections.Generic;
+using System.Diagnostics;
 using FixedMathSharp;
 using NavMesh2D.Geometry;
 using NavMesh2D.Pathfinding;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using Debug = UnityEngine.Debug;
 
 namespace NavMesh2D.Demo
 {
@@ -23,13 +25,16 @@ namespace NavMesh2D.Demo
         [Header("=== Components ===")]
         [SerializeField] private NavMesh2DVisualizer _visualizer;
 
+        [Header("=== NavMesh Asset ===")]
+        [SerializeField] private NavMesh2DData _navMeshAsset;
+
         [Header("=== Debug ===")]
         [SerializeField] private bool _autoRebuildOnChange = true;
         [SerializeField] private Vector2 _startPoint;
         [SerializeField] private Vector2 _endPoint;
 
         [Header("=== Camera Control ===")]
-        [SerializeField] private float _cameraZoomMin = 3f;
+        [SerializeField] private float _cameraZoomMin = 1.5f;
         [SerializeField] private float _cameraZoomMax = 10f;
         [SerializeField] private float _cameraZoomSpeed = 2f;
         [SerializeField] private float _cameraMoveSpeed = 10f;
@@ -772,6 +777,241 @@ namespace NavMesh2D.Demo
         }
 
         /// <summary>
+        /// Inspector에서 입력한 시작/끝점으로 경로 계산
+        /// </summary>
+        [ContextMenu("Calculate Path")]
+        public void CalculatePath()
+        {
+            if (_query == null)
+            {
+                Debug.LogError("[NavMesh2DDemo] NavMesh not built! Build first.");
+                return;
+            }
+            FindAndVisualizePath();
+        }
+
+        /// <summary>
+        /// 시작점/끝점 스왑
+        /// </summary>
+        [ContextMenu("Swap Start/End")]
+        public void SwapStartEnd()
+        {
+            (_startPoint, _endPoint) = (_endPoint, _startPoint);
+            Debug.Log($"[NavMesh2DDemo] Swapped: Start={_startPoint}, End={_endPoint}");
+        }
+
+        /// <summary>
+        /// 연결성 진단 실행 (Triangle 17 분석)
+        /// </summary>
+        [ContextMenu("Debug/Connectivity Diagnostics")]
+        public void RunConnectivityDiagnostics()
+        {
+            if (_navMesh == null)
+            {
+                Debug.LogError("[NavMesh2DDemo] NavMesh not built!");
+                return;
+            }
+
+            Vector2Fixed start = new Vector2Fixed((Fixed64)_startPoint.x, (Fixed64)_startPoint.y);
+            int startTri = _navMesh.FindTriangleContainingPoint(start);
+            if (startTri < 0)
+                startTri = _navMesh.FindNearestTriangle(start);
+
+            // Triangle 17 분석 (또는 원하는 타겟)
+            _navMesh.LogConnectivityDiagnostics(startTri, 17);
+        }
+
+        /// <summary>
+        /// Start/End 삼각형 정점 비교
+        /// </summary>
+        [ContextMenu("Debug/Compare Start-End Triangles")]
+        public void CompareStartEndTriangles()
+        {
+            if (_navMesh == null)
+            {
+                Debug.LogError("[NavMesh2DDemo] NavMesh not built!");
+                return;
+            }
+
+            Vector2Fixed start = new Vector2Fixed((Fixed64)_startPoint.x, (Fixed64)_startPoint.y);
+            Vector2Fixed end = new Vector2Fixed((Fixed64)_endPoint.x, (Fixed64)_endPoint.y);
+
+            int startTri = _navMesh.FindTriangleContainingPoint(start);
+            int endTri = _navMesh.FindTriangleContainingPoint(end);
+
+            if (startTri < 0) startTri = _navMesh.FindNearestTriangle(start);
+            if (endTri < 0) endTri = _navMesh.FindNearestTriangle(end);
+
+            var triA = _navMesh.GetTriangle(startTri);
+            var triB = _navMesh.GetTriangle(endTri);
+
+            var vA0 = _navMesh.GetVertex(triA.V0);
+            var vA1 = _navMesh.GetVertex(triA.V1);
+            var vA2 = _navMesh.GetVertex(triA.V2);
+
+            var vB0 = _navMesh.GetVertex(triB.V0);
+            var vB1 = _navMesh.GetVertex(triB.V1);
+            var vB2 = _navMesh.GetVertex(triB.V2);
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"[Compare] StartTri={startTri}, EndTri={endTri}");
+            sb.AppendLine($"  Tri{startTri} verts: V0={triA.V0}({vA0.x:F2},{vA0.y:F2}), V1={triA.V1}({vA1.x:F2},{vA1.y:F2}), V2={triA.V2}({vA2.x:F2},{vA2.y:F2})");
+            sb.AppendLine($"  Tri{startTri} neighbors: N0={triA.N0}, N1={triA.N1}, N2={triA.N2}");
+            sb.AppendLine($"  Tri{endTri} verts: V0={triB.V0}({vB0.x:F2},{vB0.y:F2}), V1={triB.V1}({vB1.x:F2},{vB1.y:F2}), V2={triB.V2}({vB2.x:F2},{vB2.y:F2})");
+            sb.AppendLine($"  Tri{endTri} neighbors: N0={triB.N0}, N1={triB.N1}, N2={triB.N2}");
+
+            // 공유 정점 찾기
+            int[] vertsA = { triA.V0, triA.V1, triA.V2 };
+            int[] vertsB = { triB.V0, triB.V1, triB.V2 };
+            var shared = new List<int>();
+            foreach (var va in vertsA)
+            {
+                foreach (var vb in vertsB)
+                {
+                    if (va == vb) shared.Add(va);
+                }
+            }
+
+            if (shared.Count >= 2)
+                sb.AppendLine($"  SHARED EDGE! Vertices: [{string.Join(",", shared)}] - Should be neighbors but NOT connected!");
+            else if (shared.Count == 1)
+                sb.AppendLine($"  Shared vertex: {shared[0]} (only corner touch, not edge)");
+            else
+                sb.AppendLine($"  No shared vertices");
+
+            Debug.Log(sb.ToString());
+        }
+
+        /// <summary>
+        /// 전체 삼각형 이웃 정보 출력
+        /// </summary>
+        [ContextMenu("Debug/Print All Triangle Neighbors")]
+        public void PrintAllTriangleNeighbors()
+        {
+            if (_navMesh == null)
+            {
+                Debug.LogError("[NavMesh2DDemo] NavMesh not built!");
+                return;
+            }
+
+            var parts = new List<string>();
+            for (int i = 0; i < _navMesh.TriangleCount; i++)
+            {
+                var tri = _navMesh.GetTriangle(i);
+                parts.Add($"[{i}]({tri.N0},{tri.N1},{tri.N2})");
+            }
+
+            Debug.Log($"Neighbors: {string.Join(" ", parts)}");
+        }
+
+        /// <summary>
+        /// 경로 정확도 테스트 (10만회)
+        /// </summary>
+        [ContextMenu("Debug/Path Accuracy Test (100k)")]
+        public void PathAccuracyTest()
+        {
+            if (_query == null)
+            {
+                Debug.LogError("[NavMesh2DDemo] NavMesh not built!");
+                return;
+            }
+
+            const int ITERATIONS = 100000;
+            var random = new System.Random(42);
+
+            int successCount = 0;
+            int failCount = 0;
+            double totalRatio = 0;
+            double maxRatio = 0;
+            double minRatio = double.MaxValue;
+            int worstCaseIndex = -1;
+            Vector2 worstStart = Vector2.zero, worstEnd = Vector2.zero;
+
+            var sw = Stopwatch.StartNew();
+
+            for (int i = 0; i < ITERATIONS; i++)
+            {
+                // 랜덤 시작/끝점 생성
+                float startX = (float)(random.NextDouble() * (_boundaryMax.x - _boundaryMin.x) + _boundaryMin.x);
+                float startY = (float)(random.NextDouble() * (_boundaryMax.y - _boundaryMin.y) + _boundaryMin.y);
+                float endX = (float)(random.NextDouble() * (_boundaryMax.x - _boundaryMin.x) + _boundaryMin.x);
+                float endY = (float)(random.NextDouble() * (_boundaryMax.y - _boundaryMin.y) + _boundaryMin.y);
+
+                Vector2 startV2 = new Vector2(startX, startY);
+                Vector2 endV2 = new Vector2(endX, endY);
+
+                // 안전한 위치로 보정
+                startV2 = GetSafePosition(startV2);
+                endV2 = GetSafePosition(endV2);
+
+                Vector2Fixed start = new Vector2Fixed((Fixed64)startV2.x, (Fixed64)startV2.y);
+                Vector2Fixed end = new Vector2Fixed((Fixed64)endV2.x, (Fixed64)endV2.y);
+
+                // 직선 거리
+                float straightDist = Vector2.Distance(startV2, endV2);
+                if (straightDist < 0.1f) continue; // 너무 가까운 점은 스킵
+
+                // 경로 탐색
+                var result = _query.FindPath(start, end);
+                if (!result.Success)
+                {
+                    failCount++;
+                    if (failCount <= 5) // 처음 5개 실패만 로그
+                    {
+                        Debug.LogWarning($"[PathAccuracyTest] Fail #{failCount}: Start=({startV2.x:F4},{startV2.y:F4}), End=({endV2.x:F4},{endV2.y:F4})");
+                    }
+                    continue;
+                }
+
+                successCount++;
+
+                // Funnel 경로 거리
+                float funnelDist = (float)result.PathLength;
+
+                // 비율 계산 (funnel / straight)
+                double ratio = funnelDist / straightDist;
+                totalRatio += ratio;
+
+                // 비정상적으로 높은 비율 디버깅
+                if (ratio > 5.0)
+                {
+                    Debug.LogWarning($"[PathAccuracyTest] High ratio {ratio:F2} at iter {i}: straight={straightDist:F4}, funnel={funnelDist:F4}, triPath=[{string.Join(",", result.TrianglePath)}], waypoints={result.Path.Count}");
+                }
+
+                if (ratio > maxRatio)
+                {
+                    maxRatio = ratio;
+                    worstCaseIndex = i;
+                    worstStart = startV2;
+                    worstEnd = endV2;
+                }
+                if (ratio < minRatio)
+                {
+                    minRatio = ratio;
+                }
+            }
+
+            sw.Stop();
+
+            double avgRatio = successCount > 0 ? totalRatio / successCount : 0;
+
+            float worstStraight = Vector2.Distance(worstStart, worstEnd);
+            Debug.Log($"[PathAccuracyTest] {ITERATIONS} iterations, {sw.ElapsedMilliseconds}ms\n" +
+                      $"  Success: {successCount}/{ITERATIONS}\n" +
+                      $"  Path/Straight Ratio - Avg: {avgRatio:F4}, Min: {minRatio:F4}, Max: {maxRatio:F4}\n" +
+                      $"  Worst case: Start=({worstStart.x:F6},{worstStart.y:F6}), End=({worstEnd.x:F6},{worstEnd.y:F6})\n" +
+                      $"  Worst straight dist: {worstStraight:F6}, ratio: {maxRatio:F4}");
+
+            // Worst case를 시작/끝점에 설정
+            if (worstCaseIndex >= 0)
+            {
+                _startPoint = worstStart;
+                _endPoint = worstEnd;
+                Debug.Log($"[PathAccuracyTest] Worst case set to Start/End points. Use 'Calculate Path' to visualize.");
+            }
+        }
+
+        /// <summary>
         /// NavMesh 빌드
         /// </summary>
         [ContextMenu("Rebuild NavMesh")]
@@ -801,8 +1041,20 @@ namespace NavMesh2D.Demo
                 }
             }
 
-            // 빌드
-            _navMesh = _builder.BuildFromRect(_boundaryMin, _boundaryMax, obstacles.Count > 0 ? obstacles : null);
+            // Asset이 있으면 거기에 저장, 없으면 런타임 생성
+            if (_navMeshAsset != null)
+            {
+                _navMesh = _navMeshAsset;
+                _builder.BuildFromRect(_navMesh, _boundaryMin, _boundaryMax, obstacles.Count > 0 ? obstacles : null);
+
+#if UNITY_EDITOR
+                UnityEditor.EditorUtility.SetDirty(_navMeshAsset);
+#endif
+            }
+            else
+            {
+                _navMesh = _builder.BuildFromRect(_boundaryMin, _boundaryMax, obstacles.Count > 0 ? obstacles : null);
+            }
 
             if (_navMesh != null)
             {
@@ -819,6 +1071,370 @@ namespace NavMesh2D.Demo
             else
             {
                 Debug.LogError("[NavMesh2DDemo] Failed to build NavMesh");
+            }
+        }
+
+        /// <summary>
+        /// 현재 NavMesh 통계 출력
+        /// </summary>
+        [ContextMenu("Print NavMesh Stats")]
+        public void PrintNavMeshStats()
+        {
+            if (_navMesh == null)
+            {
+                Debug.LogWarning("[NavMesh2DDemo] NavMesh not built yet!");
+                return;
+            }
+
+            Debug.Log($"[NavMesh2DDemo] === NavMesh Stats ===\n" +
+                      $"  Triangles: {_navMesh.TriangleCount}\n" +
+                      $"  Vertices: {_navMesh.VertexCount}");
+        }
+
+        /// <summary>
+        /// List vs Priority Queue 성능 비교 (10만회)
+        /// </summary>
+        [ContextMenu("Stress Test: List vs PriorityQueue (100k)")]
+        public void StressTestListVsPriorityQueue()
+        {
+            if (_navMesh == null)
+            {
+                Debug.LogWarning("[NavMesh2DDemo] NavMesh not built yet!");
+                return;
+            }
+
+            const int ITERATIONS = 100000;
+            var random = new System.Random(42); // 고정 시드로 동일한 테스트
+
+            // 랜덤 시작/끝점 미리 생성
+            var testCases = new List<(Vector2Fixed start, Vector2Fixed end)>();
+            for (int i = 0; i < ITERATIONS; i++)
+            {
+                float startX = (float)(random.NextDouble() * (_boundaryMax.x - _boundaryMin.x) + _boundaryMin.x);
+                float startY = (float)(random.NextDouble() * (_boundaryMax.y - _boundaryMin.y) + _boundaryMin.y);
+                float endX = (float)(random.NextDouble() * (_boundaryMax.x - _boundaryMin.x) + _boundaryMin.x);
+                float endY = (float)(random.NextDouble() * (_boundaryMax.y - _boundaryMin.y) + _boundaryMin.y);
+
+                testCases.Add((
+                    new Vector2Fixed((Fixed64)startX, (Fixed64)startY),
+                    new Vector2Fixed((Fixed64)endX, (Fixed64)endY)
+                ));
+            }
+
+            Debug.Log($"[StressTest] Starting {ITERATIONS} iterations...");
+
+            // 1. List 버전 테스트
+            var listAStar = new TriangleAStarList(_navMesh);
+            var sw = Stopwatch.StartNew();
+            int listSuccessCount = 0;
+            for (int i = 0; i < ITERATIONS; i++)
+            {
+                var result = listAStar.FindPath(testCases[i].start, testCases[i].end);
+                if (result.Success) listSuccessCount++;
+            }
+            sw.Stop();
+            double listMs = sw.Elapsed.TotalMilliseconds;
+
+            // 2. Priority Queue 버전 테스트
+            var pqAStar = new TriangleAStarPQ(_navMesh);
+            sw.Restart();
+            int pqSuccessCount = 0;
+            for (int i = 0; i < ITERATIONS; i++)
+            {
+                var result = pqAStar.FindPath(testCases[i].start, testCases[i].end);
+                if (result.Success) pqSuccessCount++;
+            }
+            sw.Stop();
+            double pqMs = sw.Elapsed.TotalMilliseconds;
+
+            // 결과 출력
+            Debug.Log($"[StressTest] === Results ({ITERATIONS} iterations) ===\n" +
+                      $"  List Version:          {listMs:F3} ms (success: {listSuccessCount})\n" +
+                      $"  PriorityQueue Version: {pqMs:F3} ms (success: {pqSuccessCount})\n" +
+                      $"  Difference:            {listMs - pqMs:F3} ms\n" +
+                      $"  PQ is {(listMs / pqMs):F2}x faster");
+        }
+
+        /// <summary>
+        /// A* with List (기존 방식)
+        /// </summary>
+        private class TriangleAStarList
+        {
+            private NavMesh2DData _navMesh;
+
+            private class AStarNode
+            {
+                public int TriangleIndex;
+                public Fixed64 G;
+                public Fixed64 H;
+                public Fixed64 F => G + H;
+                public AStarNode Parent;
+            }
+
+            public struct PathResult { public bool Success; }
+
+            public TriangleAStarList(NavMesh2DData navMesh) { _navMesh = navMesh; }
+
+            public PathResult FindPath(Vector2Fixed start, Vector2Fixed end)
+            {
+                var result = new PathResult { Success = false };
+
+                int startTri = _navMesh.FindTriangleContainingPoint(start);
+                int endTri = _navMesh.FindTriangleContainingPoint(end);
+
+                if (startTri < 0) startTri = _navMesh.FindNearestTriangle(start);
+                if (endTri < 0) endTri = _navMesh.FindNearestTriangle(end);
+                if (startTri < 0 || endTri < 0) return result;
+
+                if (startTri == endTri) { result.Success = true; return result; }
+
+                var openSet = new List<AStarNode>();
+                var closedSet = new HashSet<int>();
+                var nodeMap = new Dictionary<int, AStarNode>();
+
+                var startNode = new AStarNode { TriangleIndex = startTri, G = Fixed64.Zero };
+                startNode.H = Heuristic(startTri, end);
+                openSet.Add(startNode);
+                nodeMap[startTri] = startNode;
+
+                while (openSet.Count > 0)
+                {
+                    // List: O(n) 탐색
+                    AStarNode current = openSet[0];
+                    Fixed64 lowestF = current.F;
+                    for (int i = 1; i < openSet.Count; i++)
+                    {
+                        if (openSet[i].F < lowestF)
+                        {
+                            current = openSet[i];
+                            lowestF = current.F;
+                        }
+                    }
+                    openSet.Remove(current);
+
+                    if (current.TriangleIndex == endTri) { result.Success = true; return result; }
+
+                    closedSet.Add(current.TriangleIndex);
+
+                    var triangle = _navMesh.GetTriangle(current.TriangleIndex);
+                    for (int edge = 0; edge < 3; edge++)
+                    {
+                        int neighbor = triangle.GetNeighbor(edge);
+                        if (neighbor < 0 || closedSet.Contains(neighbor)) continue;
+
+                        Vector2Fixed edgeCenter = _navMesh.GetEdgeCenter(current.TriangleIndex, edge);
+                        Fixed64 moveCost = GetMoveCost(current.TriangleIndex, edgeCenter);
+                        Fixed64 newG = current.G + moveCost;
+
+                        if (!nodeMap.TryGetValue(neighbor, out AStarNode neighborNode))
+                        {
+                            neighborNode = new AStarNode { TriangleIndex = neighbor };
+                            neighborNode.H = Heuristic(neighbor, end);
+                            nodeMap[neighbor] = neighborNode;
+                            openSet.Add(neighborNode);
+                        }
+                        else if (!openSet.Contains(neighborNode)) continue;
+
+                        if (newG < neighborNode.G || neighborNode.Parent == null)
+                        {
+                            neighborNode.G = newG;
+                            neighborNode.Parent = current;
+                        }
+                    }
+                }
+
+                return result;
+            }
+
+            private Fixed64 Heuristic(int tri, Vector2Fixed target)
+            {
+                return Vector2Fixed.Distance(_navMesh.GetTriangleGeometry(tri).Centroid, target);
+            }
+
+            private Fixed64 GetMoveCost(int tri, Vector2Fixed to)
+            {
+                return Vector2Fixed.Distance(_navMesh.GetTriangleGeometry(tri).Centroid, to);
+            }
+        }
+
+        /// <summary>
+        /// A* with Priority Queue (Min Heap)
+        /// </summary>
+        private class TriangleAStarPQ
+        {
+            private NavMesh2DData _navMesh;
+
+            private class AStarNode
+            {
+                public int TriangleIndex;
+                public Fixed64 G;
+                public Fixed64 H;
+                public Fixed64 F => G + H;
+                public AStarNode Parent;
+            }
+
+            public struct PathResult { public bool Success; }
+
+            public TriangleAStarPQ(NavMesh2DData navMesh) { _navMesh = navMesh; }
+
+            public PathResult FindPath(Vector2Fixed start, Vector2Fixed end)
+            {
+                var result = new PathResult { Success = false };
+
+                int startTri = _navMesh.FindTriangleContainingPoint(start);
+                int endTri = _navMesh.FindTriangleContainingPoint(end);
+
+                if (startTri < 0) startTri = _navMesh.FindNearestTriangle(start);
+                if (endTri < 0) endTri = _navMesh.FindNearestTriangle(end);
+                if (startTri < 0 || endTri < 0) return result;
+
+                if (startTri == endTri) { result.Success = true; return result; }
+
+                var openSet = new MinHeap();
+                var closedSet = new HashSet<int>();
+                var nodeMap = new Dictionary<int, AStarNode>();
+
+                var startNode = new AStarNode { TriangleIndex = startTri, G = Fixed64.Zero };
+                startNode.H = Heuristic(startTri, end);
+                openSet.Insert(startNode);
+                nodeMap[startTri] = startNode;
+
+                while (openSet.Count > 0)
+                {
+                    // PriorityQueue: O(log n) 추출
+                    AStarNode current = openSet.ExtractMin();
+
+                    if (current.TriangleIndex == endTri) { result.Success = true; return result; }
+
+                    closedSet.Add(current.TriangleIndex);
+
+                    var triangle = _navMesh.GetTriangle(current.TriangleIndex);
+                    for (int edge = 0; edge < 3; edge++)
+                    {
+                        int neighbor = triangle.GetNeighbor(edge);
+                        if (neighbor < 0 || closedSet.Contains(neighbor)) continue;
+
+                        Vector2Fixed edgeCenter = _navMesh.GetEdgeCenter(current.TriangleIndex, edge);
+                        Fixed64 moveCost = GetMoveCost(current.TriangleIndex, edgeCenter);
+                        Fixed64 newG = current.G + moveCost;
+
+                        if (!nodeMap.TryGetValue(neighbor, out AStarNode neighborNode))
+                        {
+                            neighborNode = new AStarNode { TriangleIndex = neighbor };
+                            neighborNode.H = Heuristic(neighbor, end);
+                            neighborNode.G = newG;
+                            neighborNode.Parent = current;
+                            nodeMap[neighbor] = neighborNode;
+                            openSet.Insert(neighborNode);
+                        }
+                        else if (newG < neighborNode.G)
+                        {
+                            neighborNode.G = newG;
+                            neighborNode.Parent = current;
+                            openSet.DecreaseKey(neighborNode);
+                        }
+                    }
+                }
+
+                return result;
+            }
+
+            private Fixed64 Heuristic(int tri, Vector2Fixed target)
+            {
+                return Vector2Fixed.Distance(_navMesh.GetTriangleGeometry(tri).Centroid, target);
+            }
+
+            private Fixed64 GetMoveCost(int tri, Vector2Fixed to)
+            {
+                return Vector2Fixed.Distance(_navMesh.GetTriangleGeometry(tri).Centroid, to);
+            }
+
+            /// <summary>
+            /// 간단한 Min Heap 구현
+            /// </summary>
+            private class MinHeap
+            {
+                private List<AStarNode> _heap = new List<AStarNode>();
+                private Dictionary<AStarNode, int> _indices = new Dictionary<AStarNode, int>();
+
+                public int Count => _heap.Count;
+
+                public void Insert(AStarNode node)
+                {
+                    _heap.Add(node);
+                    _indices[node] = _heap.Count - 1;
+                    BubbleUp(_heap.Count - 1);
+                }
+
+                public AStarNode ExtractMin()
+                {
+                    if (_heap.Count == 0) return null;
+
+                    var min = _heap[0];
+                    _indices.Remove(min);
+
+                    var last = _heap[_heap.Count - 1];
+                    _heap.RemoveAt(_heap.Count - 1);
+
+                    if (_heap.Count > 0)
+                    {
+                        _heap[0] = last;
+                        _indices[last] = 0;
+                        BubbleDown(0);
+                    }
+
+                    return min;
+                }
+
+                public void DecreaseKey(AStarNode node)
+                {
+                    if (_indices.TryGetValue(node, out int idx))
+                    {
+                        BubbleUp(idx);
+                    }
+                }
+
+                private void BubbleUp(int idx)
+                {
+                    while (idx > 0)
+                    {
+                        int parent = (idx - 1) / 2;
+                        if (_heap[idx].F >= _heap[parent].F) break;
+
+                        Swap(idx, parent);
+                        idx = parent;
+                    }
+                }
+
+                private void BubbleDown(int idx)
+                {
+                    int count = _heap.Count;
+                    while (true)
+                    {
+                        int left = 2 * idx + 1;
+                        int right = 2 * idx + 2;
+                        int smallest = idx;
+
+                        if (left < count && _heap[left].F < _heap[smallest].F)
+                            smallest = left;
+                        if (right < count && _heap[right].F < _heap[smallest].F)
+                            smallest = right;
+
+                        if (smallest == idx) break;
+
+                        Swap(idx, smallest);
+                        idx = smallest;
+                    }
+                }
+
+                private void Swap(int i, int j)
+                {
+                    var temp = _heap[i];
+                    _heap[i] = _heap[j];
+                    _heap[j] = temp;
+                    _indices[_heap[i]] = i;
+                    _indices[_heap[j]] = j;
+                }
             }
         }
 
@@ -840,11 +1456,12 @@ namespace NavMesh2D.Demo
 
             if (result.Success)
             {
-                Debug.Log($"[NavMesh2DDemo] Path found: {result.Path.Count} waypoints, length: {(float)result.PathLength:F2}");
+                string triPathStr = string.Join(" -> ", result.TrianglePath);
+                Debug.Log($"[NavMesh2DDemo] Path found: {result.Path.Count} waypoints, length: {(float)result.PathLength:F2}\n  Start: {_startPoint} -> End: {_endPoint}\n  Triangle path: [{triPathStr}]");
 
                 if (_visualizer != null)
                 {
-                    _visualizer.SetPath(result.Path, result.Portals);
+                    _visualizer.SetPath(result.Path, result.Portals, result.TrianglePath);
                 }
 
                 // 경로를 Vector2 리스트로 변환하고 에이전트 이동 시작
@@ -1042,10 +1659,10 @@ namespace NavMesh2D.Demo
 
             // 시작점/끝점 표시
             Gizmos.color = Color.green;
-            Gizmos.DrawSphere(new Vector3(_startPoint.x, _startPoint.y, 0), 0.2f);
+            Gizmos.DrawSphere(new Vector3(_startPoint.x, _startPoint.y, 0), 0.07f);
 
             Gizmos.color = Color.red;
-            Gizmos.DrawSphere(new Vector3(_endPoint.x, _endPoint.y, 0), 0.2f);
+            Gizmos.DrawSphere(new Vector3(_endPoint.x, _endPoint.y, 0), 0.07f);
         }
 
         private void OnValidate()

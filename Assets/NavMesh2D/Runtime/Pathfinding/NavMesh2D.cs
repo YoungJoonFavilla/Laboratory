@@ -69,6 +69,22 @@ namespace NavMesh2D.Pathfinding
                 _triangles.Add(new NavTriangle(indices[0], indices[1], indices[2]));
             }
 
+            // 중복 정점 검사 (디버그)
+            Debug.Log($"[NavMesh2DData] Vertices: {_vertices.Count}, Triangles: {_triangles.Count}");
+
+            // 근접한 정점 쌍 찾기
+            for (int i = 0; i < _vertices.Count; i++)
+            {
+                for (int j = i + 1; j < _vertices.Count; j++)
+                {
+                    var dist = Vector2Fixed.Distance(_vertices[i], _vertices[j]);
+                    if (dist < (Fixed64)0.001m && dist > Fixed64.Zero)
+                    {
+                        Debug.LogWarning($"[NavMesh2DData] Near-duplicate vertices! [{i}]={_vertices[i]} [{j}]={_vertices[j]} dist={dist}");
+                    }
+                }
+            }
+
             // 인접 관계 계산
             CalculateAdjacency();
         }
@@ -256,6 +272,105 @@ namespace NavMesh2D.Pathfinding
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// 연결성 분석 - 특정 삼각형에서 도달 가능한 모든 삼각형 찾기 (BFS)
+        /// </summary>
+        public HashSet<int> AnalyzeConnectivity(int startTriangle)
+        {
+            HashSet<int> reachable = new HashSet<int>();
+            Queue<int> queue = new Queue<int>();
+
+            if (startTriangle < 0 || startTriangle >= _triangles.Count)
+                return reachable;
+
+            queue.Enqueue(startTriangle);
+            reachable.Add(startTriangle);
+
+            while (queue.Count > 0)
+            {
+                int current = queue.Dequeue();
+                var tri = _triangles[current];
+
+                for (int edge = 0; edge < 3; edge++)
+                {
+                    int neighbor = tri.GetNeighbor(edge);
+                    if (neighbor >= 0 && !reachable.Contains(neighbor))
+                    {
+                        reachable.Add(neighbor);
+                        queue.Enqueue(neighbor);
+                    }
+                }
+            }
+
+            return reachable;
+        }
+
+        /// <summary>
+        /// 특정 삼각형을 이웃으로 가지는 삼각형들 찾기 (역방향 조회)
+        /// </summary>
+        public List<int> FindTrianglesWithNeighbor(int targetTriangle)
+        {
+            List<int> result = new List<int>();
+
+            for (int i = 0; i < _triangles.Count; i++)
+            {
+                var tri = _triangles[i];
+                if (tri.N0 == targetTriangle || tri.N1 == targetTriangle || tri.N2 == targetTriangle)
+                {
+                    result.Add(i);
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// 연결성 진단 로그 출력
+        /// </summary>
+        public void LogConnectivityDiagnostics(int startTri, int targetTri)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append($"[Connectivity] Start={startTri}, Target={targetTri}");
+
+            var reachableFromStart = AnalyzeConnectivity(startTri);
+            sb.Append($" | Reachable: {reachableFromStart.Count}/{_triangles.Count}");
+            sb.Append($" | TargetReachable: {reachableFromStart.Contains(targetTri)}");
+
+            if (targetTri >= 0 && targetTri < _triangles.Count)
+            {
+                var targetTriData = _triangles[targetTri];
+                sb.Append($" | Target neighbors: ({targetTriData.N0},{targetTriData.N1},{targetTriData.N2})");
+
+                var pointingToTarget = FindTrianglesWithNeighbor(targetTri);
+                sb.Append($" | Pointing to target: [{string.Join(",", pointingToTarget)}]");
+
+                // 단방향 연결 체크
+                var oneWay = new List<string>();
+                foreach (int neighbor in new[] { targetTriData.N0, targetTriData.N1, targetTriData.N2 })
+                {
+                    if (neighbor < 0) continue;
+                    var neighborData = _triangles[neighbor];
+                    bool bidirectional = neighborData.N0 == targetTri || neighborData.N1 == targetTri || neighborData.N2 == targetTri;
+                    if (!bidirectional)
+                        oneWay.Add($"{targetTri}->{neighbor}");
+                }
+                if (oneWay.Count > 0)
+                    sb.Append($" | ONE-WAY: [{string.Join(",", oneWay)}]");
+            }
+
+            // 도달 불가능한 삼각형들
+            var unreachable = new List<int>();
+            for (int i = 0; i < _triangles.Count; i++)
+            {
+                if (!reachableFromStart.Contains(i))
+                    unreachable.Add(i);
+            }
+            if (unreachable.Count > 0)
+                sb.Append($" | UNREACHABLE: [{string.Join(",", unreachable)}]");
+
+            Debug.Log(sb.ToString());
         }
     }
 

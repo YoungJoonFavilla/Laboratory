@@ -78,6 +78,34 @@ namespace NavMesh2D.Pathfinding
         }
 
         /// <summary>
+        /// 기존 Asset에 NavMesh 데이터 저장 (에디터용)
+        /// </summary>
+        public void BuildFromRect(NavMesh2DData target, Vector2 min, Vector2 max, List<Polygon2D> obstacles = null)
+        {
+            // 직사각형 경계 폴리곤 생성 (CCW)
+            Polygon2D boundary = new Polygon2D(
+                new Vector2Fixed((Fixed64)min.x, (Fixed64)min.y),
+                new Vector2Fixed((Fixed64)max.x, (Fixed64)min.y),
+                new Vector2Fixed((Fixed64)max.x, (Fixed64)max.y),
+                new Vector2Fixed((Fixed64)min.x, (Fixed64)max.y)
+            );
+
+            // 삼각분할
+            List<Triangle2D> triangles = _triangulator.Triangulate(boundary, obstacles);
+
+            if (triangles.Count == 0)
+            {
+                Debug.LogWarning("[NavMeshBuilder] No triangles generated from triangulation");
+                return;
+            }
+
+            // 기존 Asset에 데이터 설정
+            target.SetData(triangles);
+
+            Debug.Log($"[NavMeshBuilder] NavMesh built to asset: {target.TriangleCount} triangles, {target.VertexCount} vertices");
+        }
+
+        /// <summary>
         /// Unity Vector2[] 배열로 경계 생성 (에디터용)
         /// </summary>
         public NavMesh2DData BuildFromPoints(Vector2[] boundaryPoints, List<Vector2[]> obstaclePoints = null)

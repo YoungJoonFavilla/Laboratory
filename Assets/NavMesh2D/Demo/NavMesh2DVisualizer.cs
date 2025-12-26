@@ -21,6 +21,7 @@ namespace NavMesh2D.Demo
         [SerializeField] private bool _showVertices = false;
         [SerializeField] private bool _showCentroids = false;
         [SerializeField] private bool _showNeighborConnections = false;
+        [SerializeField] private bool _showTriangleIndices = false;
 
         [Header("=== Colors ===")]
         [SerializeField] private Color _triangleFillColor = new Color(0.2f, 0.6f, 0.9f, 0.3f);
@@ -34,6 +35,8 @@ namespace NavMesh2D.Demo
         [SerializeField] private Color _pathColor = Color.green;
         [SerializeField] private Color _portalColor = Color.magenta;
         [SerializeField] private float _pathWidth = 0.1f;
+        [SerializeField] private bool _showTrianglePathIndices = true;
+        [SerializeField] private float _trianglePathSphereSize = 0.15f;
 
         [Header("=== Agent Settings ===")]
         [SerializeField] private float _agentSpeed = 20f;
@@ -67,6 +70,7 @@ namespace NavMesh2D.Demo
         // 현재 경로 (외부에서 설정)
         private List<Vector2Fixed> _currentPath;
         private List<TriangleAStar.Portal> _currentPortals;
+        private List<int> _currentTrianglePath;
 
         public NavMesh2DData NavMesh
         {
@@ -77,10 +81,11 @@ namespace NavMesh2D.Demo
         /// <summary>
         /// 경로 시각화 설정
         /// </summary>
-        public void SetPath(List<Vector2Fixed> path, List<TriangleAStar.Portal> portals = null)
+        public void SetPath(List<Vector2Fixed> path, List<TriangleAStar.Portal> portals = null, List<int> trianglePath = null)
         {
             _currentPath = path;
             _currentPortals = portals;
+            _currentTrianglePath = trianglePath;
         }
 
         /// <summary>
@@ -90,6 +95,7 @@ namespace NavMesh2D.Demo
         {
             _currentPath = null;
             _currentPortals = null;
+            _currentTrianglePath = null;
         }
 
         private void OnDrawGizmos()
@@ -165,6 +171,30 @@ namespace NavMesh2D.Demo
                     }
                 }
             }
+
+            // 삼각형 인덱스 표시
+            if (_showTriangleIndices)
+            {
+                DrawAllTriangleIndices();
+            }
+        }
+
+        private void DrawAllTriangleIndices()
+        {
+#if UNITY_EDITOR
+            var style = new GUIStyle();
+            style.normal.textColor = Color.white;
+            style.fontSize = 12;
+            style.fontStyle = FontStyle.Bold;
+            style.alignment = TextAnchor.MiddleCenter;
+
+            for (int i = 0; i < _navMesh.TriangleCount; i++)
+            {
+                var geo = _navMesh.GetTriangleGeometry(i);
+                Vector3 centroid = ToVector3(geo.Centroid);
+                UnityEditor.Handles.Label(centroid, i.ToString(), style);
+            }
+#endif
         }
 
         private void DrawPath()
@@ -208,6 +238,54 @@ namespace NavMesh2D.Demo
                     Gizmos.DrawSphere(point, size);
                 }
             }
+
+            // 삼각형 경로 인덱스 표시
+            DrawTrianglePathIndices();
+        }
+
+        private void DrawTrianglePathIndices()
+        {
+            if (!_showTrianglePathIndices || _currentTrianglePath == null || _currentTrianglePath.Count == 0 || _navMesh == null)
+                return;
+
+            for (int i = 0; i < _currentTrianglePath.Count; i++)
+            {
+                int triIndex = _currentTrianglePath[i];
+                var geo = _navMesh.GetTriangleGeometry(triIndex);
+                Vector3 centroid = ToVector3(geo.Centroid);
+
+                // 배경 원 그리기 (파란색)
+                Gizmos.color = new Color(0.2f, 0.2f, 0.9f, 0.9f);
+                Gizmos.DrawSphere(centroid, _trianglePathSphereSize);
+
+                // 경로 순서를 선으로 연결
+                if (i > 0)
+                {
+                    int prevTriIndex = _currentTrianglePath[i - 1];
+                    var prevGeo = _navMesh.GetTriangleGeometry(prevTriIndex);
+                    Vector3 prevCentroid = ToVector3(prevGeo.Centroid);
+
+                    Gizmos.color = Color.yellow;
+                    Gizmos.DrawLine(prevCentroid, centroid);
+                }
+            }
+
+#if UNITY_EDITOR
+            // 텍스트 레이블
+            var style = new GUIStyle();
+            style.normal.textColor = Color.white;
+            style.fontSize = 16;
+            style.fontStyle = FontStyle.Bold;
+            style.alignment = TextAnchor.MiddleCenter;
+
+            for (int i = 0; i < _currentTrianglePath.Count; i++)
+            {
+                int triIndex = _currentTrianglePath[i];
+                var geo = _navMesh.GetTriangleGeometry(triIndex);
+                Vector3 centroid = ToVector3(geo.Centroid);
+                UnityEditor.Handles.Label(centroid + Vector3.up * 0.1f, $"{i}:{triIndex}", style);
+            }
+#endif
         }
 
         private void DrawFilledTriangle(Vector3 v0, Vector3 v1, Vector3 v2)
