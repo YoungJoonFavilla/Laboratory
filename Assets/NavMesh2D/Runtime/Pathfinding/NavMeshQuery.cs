@@ -48,6 +48,7 @@ namespace NavMesh2D.Pathfinding
         public NavMeshQuery(NavMesh2DData navMesh)
         {
             _navMesh = navMesh;
+            _navMesh.EnsureSpatialGrid(); // 런타임 로드 시 Grid 빌드 보장
             _aStar = new TriangleAStar(navMesh);
             _funnel = new FunnelAlgorithm();
         }
@@ -79,8 +80,6 @@ namespace NavMesh2D.Pathfinding
 
             result.TrianglePath = astarResult.TrianglePath;
             result.Portals = astarResult.Portals;
-
-            UnityEngine.Debug.Log($"[NavMeshQuery] A* result: TrianglePath.Count={astarResult.TrianglePath?.Count ?? -1}, Portals.Count={astarResult.Portals?.Count ?? -1}");
 
             // 2. 같은 삼각형 내라면 직선 경로
             if (astarResult.TrianglePath.Count == 1)

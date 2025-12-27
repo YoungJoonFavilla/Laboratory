@@ -19,6 +19,19 @@ namespace NavMesh2D.Pathfinding
         [SerializeField]
         private List<Vector2Fixed> _vertices = new List<Vector2Fixed>();
 
+        // Spatial Grid (런타임 전용, 직렬화 안함)
+        private const int GRID_RESOLUTION = 32; // 32x32 그리드
+        private List<int>[] _spatialGrid;
+        private Vector2Fixed _gridMin;
+        private Vector2Fixed _gridMax;
+        private Fixed64 _cellWidth;
+        private Fixed64 _cellHeight;
+        private bool _gridBuilt = false;
+
+        // Edge Center 캐시 (런타임 전용)
+        // _edgeCenters[triIndex * 3 + edgeIndex]
+        private Vector2Fixed[] _edgeCenters;
+
         /// <summary>
         /// 삼각형 목록
         /// </summary>
@@ -69,24 +82,137 @@ namespace NavMesh2D.Pathfinding
                 _triangles.Add(new NavTriangle(indices[0], indices[1], indices[2]));
             }
 
-            // 중복 정점 검사 (디버그)
-            Debug.Log($"[NavMesh2DData] Vertices: {_vertices.Count}, Triangles: {_triangles.Count}");
+            // 인접 관계 계산
+            CalculateAdjacency();
 
-            // 근접한 정점 쌍 찾기
-            for (int i = 0; i < _vertices.Count; i++)
+            // Spatial Grid 빌드
+            BuildSpatialGrid();
+        }
+
+        /// <summary>
+        /// Spatial Grid 빌드 (빠른 삼각형 조회용)
+        /// </summary>
+        private void BuildSpatialGrid()
+        {
+            if (_vertices.Count == 0 || _triangles.Count == 0)
             {
-                for (int j = i + 1; j < _vertices.Count; j++)
+                _gridBuilt = false;
+                return;
+            }
+
+            // 1. 경계 계산
+            _gridMin = _vertices[0];
+            _gridMax = _vertices[0];
+
+            foreach (var v in _vertices)
+            {
+                if (v.x < _gridMin.x) _gridMin = new Vector2Fixed(v.x, _gridMin.y);
+                if (v.y < _gridMin.y) _gridMin = new Vector2Fixed(_gridMin.x, v.y);
+                if (v.x > _gridMax.x) _gridMax = new Vector2Fixed(v.x, _gridMax.y);
+                if (v.y > _gridMax.y) _gridMax = new Vector2Fixed(_gridMax.x, v.y);
+            }
+
+            // 약간의 여유 추가 (경계 위 점 처리)
+            Fixed64 epsilon = (Fixed64)0.001;
+            _gridMin = new Vector2Fixed(_gridMin.x - epsilon, _gridMin.y - epsilon);
+            _gridMax = new Vector2Fixed(_gridMax.x + epsilon, _gridMax.y + epsilon);
+
+            // 2. 셀 크기 계산
+            _cellWidth = (_gridMax.x - _gridMin.x) / (Fixed64)GRID_RESOLUTION;
+            _cellHeight = (_gridMax.y - _gridMin.y) / (Fixed64)GRID_RESOLUTION;
+
+            // 0으로 나누기 방지
+            if (_cellWidth <= Fixed64.Zero) _cellWidth = Fixed64.One;
+            if (_cellHeight <= Fixed64.Zero) _cellHeight = Fixed64.One;
+
+            // 3. 그리드 초기화
+            _spatialGrid = new List<int>[GRID_RESOLUTION * GRID_RESOLUTION];
+            for (int i = 0; i < _spatialGrid.Length; i++)
+            {
+                _spatialGrid[i] = new List<int>();
+            }
+
+            // 4. 각 삼각형을 해당 셀에 등록
+            for (int triIndex = 0; triIndex < _triangles.Count; triIndex++)
+            {
+                var tri = _triangles[triIndex];
+                var v0 = _vertices[tri.V0];
+                var v1 = _vertices[tri.V1];
+                var v2 = _vertices[tri.V2];
+
+                // 삼각형 AABB 계산
+                Fixed64 minX = FixedMath.Min(v0.x, FixedMath.Min(v1.x, v2.x));
+                Fixed64 minY = FixedMath.Min(v0.y, FixedMath.Min(v1.y, v2.y));
+                Fixed64 maxX = FixedMath.Max(v0.x, FixedMath.Max(v1.x, v2.x));
+                Fixed64 maxY = FixedMath.Max(v0.y, FixedMath.Max(v1.y, v2.y));
+
+                // AABB가 걸치는 셀 범위
+                int cellMinX = GetCellX(minX);
+                int cellMinY = GetCellY(minY);
+                int cellMaxX = GetCellX(maxX);
+                int cellMaxY = GetCellY(maxY);
+
+                // 해당 셀들에 삼각형 등록
+                for (int cy = cellMinY; cy <= cellMaxY; cy++)
                 {
-                    var dist = Vector2Fixed.Distance(_vertices[i], _vertices[j]);
-                    if (dist < (Fixed64)0.001m && dist > Fixed64.Zero)
+                    for (int cx = cellMinX; cx <= cellMaxX; cx++)
                     {
-                        Debug.LogWarning($"[NavMesh2DData] Near-duplicate vertices! [{i}]={_vertices[i]} [{j}]={_vertices[j]} dist={dist}");
+                        int cellIndex = cy * GRID_RESOLUTION + cx;
+                        _spatialGrid[cellIndex].Add(triIndex);
                     }
                 }
             }
 
-            // 인접 관계 계산
-            CalculateAdjacency();
+            _gridBuilt = true;
+
+            // 5. Edge Center 캐시 빌드
+            BuildEdgeCenterCache();
+        }
+
+        /// <summary>
+        /// Edge Center 캐시 빌드
+        /// </summary>
+        private void BuildEdgeCenterCache()
+        {
+            _edgeCenters = new Vector2Fixed[_triangles.Count * 3];
+
+            for (int triIndex = 0; triIndex < _triangles.Count; triIndex++)
+            {
+                var tri = _triangles[triIndex];
+                var v0 = _vertices[tri.V0];
+                var v1 = _vertices[tri.V1];
+                var v2 = _vertices[tri.V2];
+
+                // Edge 0: V0-V1
+                _edgeCenters[triIndex * 3 + 0] = new Vector2Fixed(
+                    (v0.x + v1.x) / (Fixed64)2,
+                    (v0.y + v1.y) / (Fixed64)2
+                );
+
+                // Edge 1: V1-V2
+                _edgeCenters[triIndex * 3 + 1] = new Vector2Fixed(
+                    (v1.x + v2.x) / (Fixed64)2,
+                    (v1.y + v2.y) / (Fixed64)2
+                );
+
+                // Edge 2: V2-V0
+                _edgeCenters[triIndex * 3 + 2] = new Vector2Fixed(
+                    (v2.x + v0.x) / (Fixed64)2,
+                    (v2.y + v0.y) / (Fixed64)2
+                );
+            }
+        }
+
+        private int GetCellX(Fixed64 x)
+        {
+            int cell = (int)((x - _gridMin.x) / _cellWidth);
+            return Math.Clamp(cell, 0, GRID_RESOLUTION - 1);
+        }
+
+        private int GetCellY(Fixed64 y)
+        {
+            int cell = (int)((y - _gridMin.y) / _cellHeight);
+            return Math.Clamp(cell, 0, GRID_RESOLUTION - 1);
         }
 
         /// <summary>
@@ -182,6 +308,31 @@ namespace NavMesh2D.Pathfinding
         /// </summary>
         public int FindTriangleContainingPoint(Vector2Fixed point)
         {
+            // Spatial Grid 사용 (빌드된 경우)
+            if (_gridBuilt && _spatialGrid != null)
+            {
+                // 점이 그리드 범위 밖이면 -1
+                if (point.x < _gridMin.x || point.x > _gridMax.x ||
+                    point.y < _gridMin.y || point.y > _gridMax.y)
+                {
+                    return -1;
+                }
+
+                int cellX = GetCellX(point.x);
+                int cellY = GetCellY(point.y);
+                int cellIndex = cellY * GRID_RESOLUTION + cellX;
+
+                // 해당 셀의 삼각형만 체크
+                foreach (int triIndex in _spatialGrid[cellIndex])
+                {
+                    var geo = GetTriangleGeometry(triIndex);
+                    if (geo.ContainsPoint(point))
+                        return triIndex;
+                }
+                return -1;
+            }
+
+            // Fallback: 전체 순회
             for (int i = 0; i < _triangles.Count; i++)
             {
                 var geo = GetTriangleGeometry(i);
@@ -192,12 +343,30 @@ namespace NavMesh2D.Pathfinding
         }
 
         /// <summary>
+        /// Spatial Grid가 빌드 안됐으면 빌드 (런타임 로드 시)
+        /// </summary>
+        public void EnsureSpatialGrid()
+        {
+            if (!_gridBuilt)
+            {
+                BuildSpatialGrid();
+            }
+        }
+
+        /// <summary>
         /// 가장 가까운 삼각형 인덱스 찾기
         /// </summary>
         public int FindNearestTriangle(Vector2Fixed point)
         {
+            // Spatial Grid 사용
+            if (_gridBuilt && _spatialGrid != null)
+            {
+                return FindNearestTriangleWithGrid(point);
+            }
+
+            // Fallback: 전체 순회
             int nearest = -1;
-            Fixed64 nearestDist = (Fixed64)999999999;
+            Fixed64 nearestDist = Fixed64.MAX_VALUE;
 
             for (int i = 0; i < _triangles.Count; i++)
             {
@@ -215,10 +384,94 @@ namespace NavMesh2D.Pathfinding
         }
 
         /// <summary>
+        /// Spatial Grid를 이용한 가장 가까운 삼각형 찾기
+        /// 중심 셀에서 시작해서 링 형태로 확장
+        /// </summary>
+        private int FindNearestTriangleWithGrid(Vector2Fixed point)
+        {
+            int centerX = GetCellX(point.x);
+            int centerY = GetCellY(point.y);
+
+            int nearest = -1;
+            Fixed64 nearestDistSqr = Fixed64.MAX_VALUE;
+
+            // 링 형태로 확장 탐색 (최대 그리드 크기까지)
+            int maxRing = GRID_RESOLUTION;
+
+            for (int ring = 0; ring <= maxRing; ring++)
+            {
+                // 현재 링에서 찾은 최소 거리가 다음 링의 최소 가능 거리보다 작으면 종료
+                if (nearest >= 0)
+                {
+                    // 다음 링까지의 최소 거리 (셀 경계까지의 거리)
+                    Fixed64 nextRingMinDist = _cellWidth * (Fixed64)(ring);
+                    Fixed64 nextRingMinDistSqr = nextRingMinDist * nextRingMinDist;
+
+                    if (nearestDistSqr <= nextRingMinDistSqr)
+                    {
+                        break; // 더 가까운 삼각형이 다음 링에 없음
+                    }
+                }
+
+                // 링의 셀들을 순회
+                for (int dx = -ring; dx <= ring; dx++)
+                {
+                    for (int dy = -ring; dy <= ring; dy++)
+                    {
+                        // 링의 테두리만 (내부는 이전 링에서 처리됨)
+                        if (ring > 0 && Math.Abs(dx) < ring && Math.Abs(dy) < ring)
+                            continue;
+
+                        int cx = centerX + dx;
+                        int cy = centerY + dy;
+
+                        // 범위 체크
+                        if (cx < 0 || cx >= GRID_RESOLUTION || cy < 0 || cy >= GRID_RESOLUTION)
+                            continue;
+
+                        int cellIndex = cy * GRID_RESOLUTION + cx;
+
+                        // 해당 셀의 삼각형들 체크
+                        foreach (int triIndex in _spatialGrid[cellIndex])
+                        {
+                            var geo = GetTriangleGeometry(triIndex);
+                            Fixed64 distSqr = Vector2Fixed.SqrDistance(point, geo.Centroid);
+
+                            if (distSqr < nearestDistSqr)
+                            {
+                                nearestDistSqr = distSqr;
+                                nearest = triIndex;
+                            }
+                        }
+                    }
+                }
+
+                // 현재 링에서 찾았고, 다음 링은 확실히 더 멀면 종료
+                if (nearest >= 0 && ring > 0)
+                {
+                    Fixed64 nextRingMinDist = _cellWidth * (Fixed64)(ring + 1);
+                    if (nearestDistSqr <= nextRingMinDist * nextRingMinDist)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            return nearest;
+        }
+
+        /// <summary>
         /// 에지의 중심점 (Portal) 가져오기
         /// </summary>
         public Vector2Fixed GetEdgeCenter(int triIndex, int edgeIndex)
         {
+            // 캐시된 값 사용
+            if (_edgeCenters != null)
+            {
+                return _edgeCenters[triIndex * 3 + edgeIndex];
+            }
+
+            // Fallback (캐시 없을 때)
             var tri = _triangles[triIndex];
             int v0, v1;
 
@@ -274,104 +527,6 @@ namespace NavMesh2D.Pathfinding
             return null;
         }
 
-        /// <summary>
-        /// 연결성 분석 - 특정 삼각형에서 도달 가능한 모든 삼각형 찾기 (BFS)
-        /// </summary>
-        public HashSet<int> AnalyzeConnectivity(int startTriangle)
-        {
-            HashSet<int> reachable = new HashSet<int>();
-            Queue<int> queue = new Queue<int>();
-
-            if (startTriangle < 0 || startTriangle >= _triangles.Count)
-                return reachable;
-
-            queue.Enqueue(startTriangle);
-            reachable.Add(startTriangle);
-
-            while (queue.Count > 0)
-            {
-                int current = queue.Dequeue();
-                var tri = _triangles[current];
-
-                for (int edge = 0; edge < 3; edge++)
-                {
-                    int neighbor = tri.GetNeighbor(edge);
-                    if (neighbor >= 0 && !reachable.Contains(neighbor))
-                    {
-                        reachable.Add(neighbor);
-                        queue.Enqueue(neighbor);
-                    }
-                }
-            }
-
-            return reachable;
-        }
-
-        /// <summary>
-        /// 특정 삼각형을 이웃으로 가지는 삼각형들 찾기 (역방향 조회)
-        /// </summary>
-        public List<int> FindTrianglesWithNeighbor(int targetTriangle)
-        {
-            List<int> result = new List<int>();
-
-            for (int i = 0; i < _triangles.Count; i++)
-            {
-                var tri = _triangles[i];
-                if (tri.N0 == targetTriangle || tri.N1 == targetTriangle || tri.N2 == targetTriangle)
-                {
-                    result.Add(i);
-                }
-            }
-
-            return result;
-        }
-
-        /// <summary>
-        /// 연결성 진단 로그 출력
-        /// </summary>
-        public void LogConnectivityDiagnostics(int startTri, int targetTri)
-        {
-            var sb = new System.Text.StringBuilder();
-            sb.Append($"[Connectivity] Start={startTri}, Target={targetTri}");
-
-            var reachableFromStart = AnalyzeConnectivity(startTri);
-            sb.Append($" | Reachable: {reachableFromStart.Count}/{_triangles.Count}");
-            sb.Append($" | TargetReachable: {reachableFromStart.Contains(targetTri)}");
-
-            if (targetTri >= 0 && targetTri < _triangles.Count)
-            {
-                var targetTriData = _triangles[targetTri];
-                sb.Append($" | Target neighbors: ({targetTriData.N0},{targetTriData.N1},{targetTriData.N2})");
-
-                var pointingToTarget = FindTrianglesWithNeighbor(targetTri);
-                sb.Append($" | Pointing to target: [{string.Join(",", pointingToTarget)}]");
-
-                // 단방향 연결 체크
-                var oneWay = new List<string>();
-                foreach (int neighbor in new[] { targetTriData.N0, targetTriData.N1, targetTriData.N2 })
-                {
-                    if (neighbor < 0) continue;
-                    var neighborData = _triangles[neighbor];
-                    bool bidirectional = neighborData.N0 == targetTri || neighborData.N1 == targetTri || neighborData.N2 == targetTri;
-                    if (!bidirectional)
-                        oneWay.Add($"{targetTri}->{neighbor}");
-                }
-                if (oneWay.Count > 0)
-                    sb.Append($" | ONE-WAY: [{string.Join(",", oneWay)}]");
-            }
-
-            // 도달 불가능한 삼각형들
-            var unreachable = new List<int>();
-            for (int i = 0; i < _triangles.Count; i++)
-            {
-                if (!reachableFromStart.Contains(i))
-                    unreachable.Add(i);
-            }
-            if (unreachable.Count > 0)
-                sb.Append($" | UNREACHABLE: [{string.Join(",", unreachable)}]");
-
-            Debug.Log(sb.ToString());
-        }
     }
 
     /// <summary>

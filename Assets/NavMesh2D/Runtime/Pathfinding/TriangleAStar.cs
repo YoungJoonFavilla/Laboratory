@@ -56,29 +56,13 @@ namespace NavMesh2D.Pathfinding
             }
         }
 
-        // A* 노드 (struct로 GC 최소화)
-        private struct AStarNode
-        {
-            public int TriangleIndex;
-            public Fixed64 GScore;
-            public Fixed64 HScore;
-            public Fixed64 FScore => GScore + HScore;
-
-            public AStarNode(int triangleIndex, Fixed64 g, Fixed64 h)
-            {
-                TriangleIndex = triangleIndex;
-                GScore = g;
-                HScore = h;
-            }
-        }
-
         public TriangleAStar(NavMesh2DData navMesh)
         {
             _navMesh = navMesh;
         }
 
         // 재사용 컬렉션
-        private readonly List<AStarNode> _openSet = new List<AStarNode>();
+        private readonly IndexedMinHeap _openSet = new IndexedMinHeap();
         private readonly HashSet<int> _closedSet = new HashSet<int>();
         private readonly Dictionary<int, Fixed64> _gScore = new Dictionary<int, Fixed64>();
         private readonly Dictionary<int, int> _cameFrom = new Dictionary<int, int>();
@@ -115,12 +99,6 @@ namespace NavMesh2D.Pathfinding
             if (startTri < 0 || endTri < 0)
                 return result;
 
-            // 시작/도착 삼각형의 이웃 정보 출력
-            var startTriData = _navMesh.GetTriangle(startTri);
-            var endTriData = _navMesh.GetTriangle(endTri);
-            UnityEngine.Debug.Log($"[TriangleAStar] startTri={startTri} (neighbors: {startTriData.GetNeighbor(0)}, {startTriData.GetNeighbor(1)}, {startTriData.GetNeighbor(2)})");
-            UnityEngine.Debug.Log($"[TriangleAStar] endTri={endTri} (neighbors: {endTriData.GetNeighbor(0)}, {endTriData.GetNeighbor(1)}, {endTriData.GetNeighbor(2)})");
-
             // 같은 삼각형 내에 있으면 바로 성공
             if (startTri == endTri)
             {
@@ -138,7 +116,7 @@ namespace NavMesh2D.Pathfinding
             // 2. A* 알고리즘 실행
             // 시작점에서 끝점까지의 휴리스틱 (실제 점 사용)
             Fixed64 hStart = Vector2Fixed.Distance(start, end);
-            _openSet.Add(new AStarNode(startTri, Fixed64.Zero, hStart));
+            _openSet.Insert(startTri, Fixed64.Zero, hStart);
             _gScore[startTri] = Fixed64.Zero;
 
             // 이전에 통과한 에지 중심점 저장 (실제 시작점부터 계산하기 위해)
@@ -147,24 +125,17 @@ namespace NavMesh2D.Pathfinding
 
             while (_openSet.Count > 0)
             {
-                // F가 가장 낮은 노드 선택
-                int bestIndex = FindLowestFScore();
-                AStarNode current = _openSet[bestIndex];
-                int currentTri = current.TriangleIndex;
+                // F가 가장 낮은 노드 추출 - O(log n)
+                var (currentTri, _, _) = _openSet.ExtractMin();
 
                 // 목표 도달
                 if (currentTri == endTri)
                 {
-                    // 삼각형 17이 탐색됐는지 확인
-                    bool tri17Explored = _closedSet.Contains(17);
-                    bool tri17InOpen = FindInOpenSet(17) >= 0;
-                    UnityEngine.Debug.Log($"[TriangleAStar] Goal reached! Explored {_closedSet.Count} triangles. Tri17: explored={tri17Explored}, inOpenSet={tri17InOpen}");
                     result.Success = true;
                     ReconstructPath(result, currentTri);
                     return result;
                 }
 
-                _openSet.RemoveAt(bestIndex);
                 _closedSet.Add(currentTri);
 
                 // 현재 위치 (시작점이면 실제 시작점, 아니면 진입한 에지 중심점)
@@ -188,7 +159,6 @@ namespace NavMesh2D.Pathfinding
                     {
                         Fixed64 finalLeg = Vector2Fixed.Distance(edgeCenter, end);
                         tentativeG += finalLeg;
-                        UnityEngine.Debug.Log($"[TriangleAStar] Path to goal via tri {currentTri}, edge {edge}: G={tentativeG} (finalLeg={finalLeg})");
                     }
 
                     // 더 좋은 경로인지 확인
@@ -201,15 +171,14 @@ namespace NavMesh2D.Pathfinding
                         // 휴리스틱: 에지 중심점에서 실제 끝점까지 (도착 삼각형이면 이미 G에 포함했으므로 0)
                         Fixed64 h = (neighbor == endTri) ? Fixed64.Zero : Vector2Fixed.Distance(edgeCenter, end);
 
-                        // openSet에 이미 있는지 확인하고 업데이트 또는 추가
-                        int existingIndex = FindInOpenSet(neighbor);
-                        if (existingIndex >= 0)
+                        // openSet에 이미 있는지 확인하고 업데이트 또는 추가 - O(1) + O(log n)
+                        if (_openSet.Contains(neighbor))
                         {
-                            _openSet[existingIndex] = new AStarNode(neighbor, tentativeG, h);
+                            _openSet.UpdatePriority(neighbor, tentativeG, h);
                         }
                         else
                         {
-                            _openSet.Add(new AStarNode(neighbor, tentativeG, h));
+                            _openSet.Insert(neighbor, tentativeG, h);
                         }
                     }
                 }
@@ -217,36 +186,6 @@ namespace NavMesh2D.Pathfinding
 
             // 경로를 찾지 못함
             return result;
-        }
-
-        private int FindInOpenSet(int triangleIndex)
-        {
-            for (int i = 0; i < _openSet.Count; i++)
-            {
-                if (_openSet[i].TriangleIndex == triangleIndex)
-                    return i;
-            }
-            return -1;
-        }
-
-        /// <summary>
-        /// F가 가장 낮은 노드의 인덱스 반환
-        /// </summary>
-        private int FindLowestFScore()
-        {
-            int bestIndex = 0;
-            Fixed64 bestF = _openSet[0].FScore;
-
-            for (int i = 1; i < _openSet.Count; i++)
-            {
-                if (_openSet[i].FScore < bestF)
-                {
-                    bestF = _openSet[i].FScore;
-                    bestIndex = i;
-                }
-            }
-
-            return bestIndex;
         }
 
         /// <summary>
@@ -269,10 +208,6 @@ namespace NavMesh2D.Pathfinding
             {
                 result.TrianglePath.Add(_pathBuffer[i]);
             }
-
-            // 총 비용 계산
-            Fixed64 totalCost = _gScore.ContainsKey(endTri) ? _gScore[endTri] : Fixed64.Zero;
-            UnityEngine.Debug.Log($"[TriangleAStar] Path: {result.TrianglePath.Count} triangles, G={totalCost}\n  [{string.Join(" -> ", result.TrianglePath)}]");
 
             // 포탈 생성 (연속된 삼각형들 사이의 공유 에지)
             for (int i = 0; i < result.TrianglePath.Count - 1; i++)

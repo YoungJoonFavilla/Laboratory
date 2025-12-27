@@ -385,7 +385,7 @@
         </member>
         <member name="M:FixedMathSharp.FixedMath.Clamp(FixedMathSharp.Fixed64,FixedMathSharp.Fixed64,System.Nullable{FixedMathSharp.Fixed64})">
             <summary>
-            Clamps a fixed-point value between the given minimum and maximum values (defaults to Fixed64.Max).
+            Clamps a fixed-point value between the given minimum and maximum values (defaults to Fixed64.MAX_VALUE).
             </summary>
         </member>
         <member name="M:FixedMathSharp.FixedMath.ClampOne(FixedMathSharp.Fixed64)">
@@ -510,7 +510,7 @@
             <returns>The sum of <paramref name="x"/> and <paramref name="y"/>.</returns>
             <remarks>
             Overflow is detected by checking for a change in the sign bit that indicates a wrap-around.
-            Additionally, a special check is performed for adding <see cref="F:FixedMathSharp.Fixed64.MIN_VALUE"/> and -1, 
+            Additionally, a special check is performed for adding <see cref="F:FixedMathSharp.Fixed64.MIN_VALUE_VALUE"/> and -1, 
             as this is a known edge case for overflow.
             </remarks>
         </member>
