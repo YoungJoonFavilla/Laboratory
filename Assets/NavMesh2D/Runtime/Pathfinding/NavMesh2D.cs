@@ -31,9 +31,19 @@ namespace NavMesh2D.Pathfinding
         private Fixed64 _cellHeight;
         private bool _gridBuilt = false;
 
-        // Edge Center 캐시 (런타임 전용)
-        // _edgeCenters[triIndex * 3 + edgeIndex]
-        private Vector2Fixed[] _edgeCenters;
+        // Edge Center 캐시 (런타임 전용, raw long 최적화)
+        // _edgeCentersX[triIndex * 3 + edgeIndex], _edgeCentersY[triIndex * 3 + edgeIndex]
+        private long[] _edgeCentersX;
+        private long[] _edgeCentersY;
+
+        // Edge Pair Distance 캐시 (삼각형 내 에지 쌍 간 거리, 사전계산)
+        // _edgePairDistances[triIndex * 3 + pairIndex]
+        // pairIndex: 0 = edge0↔edge1, 1 = edge0↔edge2, 2 = edge1↔edge2
+        private long[] _edgePairDistances;
+
+        // Neighbor Entry Edge 캐시 (이웃 삼각형 입장에서의 진입 에지 인덱스)
+        // _neighborEntryEdge[triIndex * 3 + edge] = 이웃이 나를 참조하는 에지 인덱스
+        private int[] _neighborEntryEdge;
 
         /// <summary>
         /// 삼각형 목록
@@ -209,11 +219,14 @@ namespace NavMesh2D.Pathfinding
         }
 
         /// <summary>
-        /// Edge Center 캐시 빌드
+        /// Edge Center 캐시 빌드 (raw long 최적화)
         /// </summary>
         private void BuildEdgeCenterCache()
         {
-            _edgeCenters = new Vector2Fixed[_triangles.Count * 3];
+            int size = _triangles.Count * 3;
+            _edgeCentersX = new long[size];
+            _edgeCentersY = new long[size];
+            _edgePairDistances = new long[size]; // 3 pairs per triangle
 
             for (int triIndex = 0; triIndex < _triangles.Count; triIndex++)
             {
@@ -222,24 +235,99 @@ namespace NavMesh2D.Pathfinding
                 var v1 = _vertices[tri.V1];
                 var v2 = _vertices[tri.V2];
 
-                // Edge 0: V0-V1
-                _edgeCenters[triIndex * 3 + 0] = new Vector2Fixed(
-                    (v0.x + v1.x) / (Fixed64)2,
-                    (v0.y + v1.y) / (Fixed64)2
-                );
+                // raw long 값 추출
+                long v0x = v0.x.m_rawValue, v0y = v0.y.m_rawValue;
+                long v1x = v1.x.m_rawValue, v1y = v1.y.m_rawValue;
+                long v2x = v2.x.m_rawValue, v2y = v2.y.m_rawValue;
+
+                // Edge 0: V0-V1 (중점 = (v0 + v1) / 2 = (v0 + v1) >> 1)
+                int idx0 = triIndex * 3 + 0;
+                long e0x = (v0x + v1x) >> 1;
+                long e0y = (v0y + v1y) >> 1;
+                _edgeCentersX[idx0] = e0x;
+                _edgeCentersY[idx0] = e0y;
 
                 // Edge 1: V1-V2
-                _edgeCenters[triIndex * 3 + 1] = new Vector2Fixed(
-                    (v1.x + v2.x) / (Fixed64)2,
-                    (v1.y + v2.y) / (Fixed64)2
-                );
+                int idx1 = triIndex * 3 + 1;
+                long e1x = (v1x + v2x) >> 1;
+                long e1y = (v1y + v2y) >> 1;
+                _edgeCentersX[idx1] = e1x;
+                _edgeCentersY[idx1] = e1y;
 
                 // Edge 2: V2-V0
-                _edgeCenters[triIndex * 3 + 2] = new Vector2Fixed(
-                    (v2.x + v0.x) / (Fixed64)2,
-                    (v2.y + v0.y) / (Fixed64)2
-                );
+                int idx2 = triIndex * 3 + 2;
+                long e2x = (v2x + v0x) >> 1;
+                long e2y = (v2y + v0y) >> 1;
+                _edgeCentersX[idx2] = e2x;
+                _edgeCentersY[idx2] = e2y;
+
+                // Edge Pair Distances (Fixed64 사용 - 빌드 타임이라 OK)
+                // pairIndex 0: edge0 ↔ edge1
+                // pairIndex 1: edge0 ↔ edge2
+                // pairIndex 2: edge1 ↔ edge2
+                var ec0 = new Vector2Fixed(Fixed64.FromRaw(e0x), Fixed64.FromRaw(e0y));
+                var ec1 = new Vector2Fixed(Fixed64.FromRaw(e1x), Fixed64.FromRaw(e1y));
+                var ec2 = new Vector2Fixed(Fixed64.FromRaw(e2x), Fixed64.FromRaw(e2y));
+
+                _edgePairDistances[triIndex * 3 + 0] = Vector2Fixed.Distance(ec0, ec1).m_rawValue;
+                _edgePairDistances[triIndex * 3 + 1] = Vector2Fixed.Distance(ec0, ec2).m_rawValue;
+                _edgePairDistances[triIndex * 3 + 2] = Vector2Fixed.Distance(ec1, ec2).m_rawValue;
             }
+
+            // Neighbor Entry Edge 계산
+            _neighborEntryEdge = new int[size];
+            for (int triIndex = 0; triIndex < _triangles.Count; triIndex++)
+            {
+                var tri = _triangles[triIndex];
+                for (int edge = 0; edge < 3; edge++)
+                {
+                    int neighbor = tri.GetNeighbor(edge);
+                    if (neighbor < 0)
+                    {
+                        _neighborEntryEdge[triIndex * 3 + edge] = -1;
+                        continue;
+                    }
+
+                    // 이웃 삼각형에서 나를 참조하는 에지 찾기
+                    var neighborTri = _triangles[neighbor];
+                    int entryEdge = -1;
+                    for (int ne = 0; ne < 3; ne++)
+                    {
+                        if (neighborTri.GetNeighbor(ne) == triIndex)
+                        {
+                            entryEdge = ne;
+                            break;
+                        }
+                    }
+                    _neighborEntryEdge[triIndex * 3 + edge] = entryEdge;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 삼각형 내 두 에지 센터 간 사전계산 거리 (raw long)
+        /// </summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        public long GetEdgePairDistanceRaw(int triIndex, int edge1, int edge2)
+        {
+            // edge1과 edge2로부터 pairIndex 계산
+            // (0,1)->0, (0,2)->1, (1,2)->2
+            int pairIndex;
+            if (edge1 > edge2) { int t = edge1; edge1 = edge2; edge2 = t; }
+            if (edge1 == 0 && edge2 == 1) pairIndex = 0;
+            else if (edge1 == 0 && edge2 == 2) pairIndex = 1;
+            else pairIndex = 2; // (1,2)
+
+            return _edgePairDistances[triIndex * 3 + pairIndex];
+        }
+
+        /// <summary>
+        /// 이웃 삼각형이 나를 참조하는 에지 인덱스 반환
+        /// </summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        public int GetNeighborEntryEdge(int triIndex, int edge)
+        {
+            return _neighborEntryEdge[triIndex * 3 + edge];
         }
 
         private int GetCellX(Fixed64 x)
@@ -510,10 +598,14 @@ namespace NavMesh2D.Pathfinding
         /// </summary>
         public Vector2Fixed GetEdgeCenter(int triIndex, int edgeIndex)
         {
-            // 캐시된 값 사용
-            if (_edgeCenters != null)
+            // 캐시된 값 사용 (raw long → Fixed64 변환)
+            if (_edgeCentersX != null)
             {
-                return _edgeCenters[triIndex * 3 + edgeIndex];
+                int idx = triIndex * 3 + edgeIndex;
+                return new Vector2Fixed(
+                    Fixed64.FromRaw(_edgeCentersX[idx]),
+                    Fixed64.FromRaw(_edgeCentersY[idx])
+                );
             }
 
             // Fallback (캐시 없을 때)
@@ -532,6 +624,17 @@ namespace NavMesh2D.Pathfinding
                 (_vertices[v0].x + _vertices[v1].x) / (Fixed64)2,
                 (_vertices[v0].y + _vertices[v1].y) / (Fixed64)2
             );
+        }
+
+        /// <summary>
+        /// 에지의 중심점 (raw long 직접 반환, A* 최적화용)
+        /// </summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        public void GetEdgeCenterRaw(int triIndex, int edgeIndex, out long x, out long y)
+        {
+            int idx = triIndex * 3 + edgeIndex;
+            x = _edgeCentersX[idx];
+            y = _edgeCentersY[idx];
         }
 
         /// <summary>

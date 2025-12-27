@@ -43,6 +43,11 @@ namespace NavMesh2D.Pathfinding
             /// 디버그용: 포탈 리스트
             /// </summary>
             public List<TriangleAStar.Portal> Portals;
+
+            /// <summary>
+            /// 디버그용: 탐색한 삼각형 수
+            /// </summary>
+            public int ExploredCount;
         }
 
         public NavMeshQuery(NavMesh2DData navMesh)
@@ -51,6 +56,14 @@ namespace NavMesh2D.Pathfinding
             _navMesh.EnsureSpatialGrid(); // 런타임 로드 시 Grid 빌드 보장
             _aStar = new TriangleAStar(navMesh);
             _funnel = new FunnelAlgorithm();
+        }
+
+        /// <summary>
+        /// A* 경로 찾기만 수행 (Funnel 없이, 벤치마크용)
+        /// </summary>
+        public TriangleAStar.PathResult FindPathAStarOnly(Vector2Fixed start, Vector2Fixed end)
+        {
+            return _aStar.FindPath(start, end);
         }
 
         /// <summary>
@@ -80,6 +93,7 @@ namespace NavMesh2D.Pathfinding
 
             result.TrianglePath = astarResult.TrianglePath;
             result.Portals = astarResult.Portals;
+            result.ExploredCount = astarResult.ExploredCount;
 
             // 2. 같은 삼각형 내라면 직선 경로
             if (astarResult.TrianglePath.Count == 1)

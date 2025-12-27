@@ -97,6 +97,9 @@ namespace NavMesh2D.Demo
 
         private void Start()
         {
+            // Fixed64 상수 확인 (최적화용)
+            Debug.Log($"[Fixed64] ONE = {Fixed64.One.m_rawValue}");
+
             _builder = new NavMeshBuilder();
             CreateBackground();
             CreateAgents();
@@ -1044,6 +1047,92 @@ namespace NavMesh2D.Demo
                 _endPoint = new Vector2((float)worstEnd.x, (float)worstEnd.y);
                 Debug.Log($"[PathAccuracyTest] Worst case set to Start/End points. Use 'Calculate Path' to visualize.");
             }
+        }
+
+        /// <summary>
+        /// 개별 경로 탐색 로그 테스트 (1000회, 각각 로그)
+        /// </summary>
+        [ContextMenu("Path Detail Test (1000 logs)")]
+        public void PathDetailTest()
+        {
+            if (_query == null)
+            {
+                Debug.LogError("[NavMesh2DDemo] NavMesh not built!");
+                return;
+            }
+
+            const int ITERATIONS = 1000;
+            var random = new System.Random(42);
+
+            Fixed64 minX = (Fixed64)_boundaryMin.x;
+            Fixed64 minY = (Fixed64)_boundaryMin.y;
+            Fixed64 rangeX = (Fixed64)_boundaryMax.x - minX;
+            Fixed64 rangeY = (Fixed64)_boundaryMax.y - minY;
+
+            // 누적 타이밍
+            long totalFindTri = 0, totalExtract = 0, totalGetTri = 0;
+            long totalMove = 0, totalHeur = 0, totalHeap = 0;
+            int successCount = 0;
+
+            for (int i = 0; i < ITERATIONS; i++)
+            {
+                Fixed64 startX = minX + (Fixed64)random.NextDouble() * rangeX;
+                Fixed64 startY = minY + (Fixed64)random.NextDouble() * rangeY;
+                Fixed64 endX = minX + (Fixed64)random.NextDouble() * rangeX;
+                Fixed64 endY = minY + (Fixed64)random.NextDouble() * rangeY;
+
+                Vector2Fixed start = new Vector2Fixed(startX, startY);
+                Vector2Fixed end = new Vector2Fixed(endX, endY);
+
+                int startTri = _navMesh.FindTriangleContainingPoint(start);
+                int endTri = _navMesh.FindTriangleContainingPoint(end);
+
+                if (startTri < 0)
+                    start = _query.ClampToNavMesh(start);
+                if (endTri < 0)
+                    end = _query.ClampToNavMesh(end);
+
+                // A* 시간만 측정
+                var astarSw = Stopwatch.StartNew();
+                var astarResult = _query.FindPathAStarOnly(start, end);
+                astarSw.Stop();
+                double astarMs = (double)astarSw.ElapsedTicks / Stopwatch.Frequency * 1000.0;
+
+                // 전체 시간 측정 (A* + Funnel)
+                var totalSw = Stopwatch.StartNew();
+                var result = _query.FindPath(start, end);
+                totalSw.Stop();
+
+                if (result.Success)
+                {
+                    successCount++;
+                    totalFindTri += astarResult.TicksFindTriangle;
+                    totalExtract += astarResult.TicksExtractMin;
+                    totalGetTri += astarResult.TicksGetTriangle;
+                    totalMove += astarResult.TicksMoveCost;
+                    totalHeur += astarResult.TicksHeuristic;
+                    totalHeap += astarResult.TicksHeapOps;
+                }
+            }
+
+            // 결과 출력
+            double freq = Stopwatch.Frequency / 1000.0;
+            double findTriMs = totalFindTri / freq;
+            double extractMs = totalExtract / freq;
+            double getTriMs = totalGetTri / freq;
+            double moveMs = totalMove / freq;
+            double heurMs = totalHeur / freq;
+            double heapMs = totalHeap / freq;
+            double totalMs = findTriMs + extractMs + getTriMs + moveMs + heurMs + heapMs;
+
+            Debug.Log($"[PathDetailTest] {successCount}/{ITERATIONS} succeeded\n" +
+                $"  Total A* time: {totalMs:F2}ms\n" +
+                $"  FindTri: {findTriMs:F2}ms ({findTriMs/totalMs*100:F1}%)\n" +
+                $"  Extract: {extractMs:F2}ms ({extractMs/totalMs*100:F1}%)\n" +
+                $"  GetTri:  {getTriMs:F2}ms ({getTriMs/totalMs*100:F1}%)\n" +
+                $"  Move:    {moveMs:F2}ms ({moveMs/totalMs*100:F1}%)\n" +
+                $"  Heur:    {heurMs:F2}ms ({heurMs/totalMs*100:F1}%)\n" +
+                $"  Heap:    {heapMs:F2}ms ({heapMs/totalMs*100:F1}%)");
         }
 
         // 버텍스 스냅 허용 거리 (이 거리 이내의 정점은 같은 정점으로 통합)
