@@ -1100,12 +1100,14 @@ namespace NavMesh2D.Demo
                 if (astarResult.Success)
                 {
                     successCount++;
+#if NAVMESH_PROFILING
                     totalFindTri += astarResult.TicksFindTriangle;
                     totalExtract += astarResult.TicksExtractMin;
                     totalGetTri += astarResult.TicksGetTriangle;
                     totalMove += astarResult.TicksMoveCost;
                     totalHeur += astarResult.TicksHeuristic;
                     totalHeap += astarResult.TicksHeapOps;
+#endif
                 }
             }
 
@@ -1174,27 +1176,32 @@ namespace NavMesh2D.Demo
 
             // 순수 A* 벤치마크
             int successCount = 0;
+            long totalInternalTicks = 0;
+            double freq = Stopwatch.Frequency / 1000.0;
+
             var sw = Stopwatch.StartNew();
             for (int i = 0; i < ITERATIONS; i++)
             {
                 var result = _query.FindPathAStarOnly(testCases[i].start, testCases[i].end);
-                if (result.Success) successCount++;
+                if (result.Success)
+                {
+                    successCount++;
+#if NAVMESH_PROFILING
+                    totalInternalTicks += result.TicksFindTriangle + result.TicksExtractMin +
+                        result.TicksGetTriangle + result.TicksMoveCost +
+                        result.TicksHeuristic + result.TicksHeapOps;
+#endif
+                }
             }
             sw.Stop();
-            double astarMs = sw.Elapsed.TotalMilliseconds;
-
-            // 전체 FindPath 벤치마크 (A* + Funnel)
-            sw.Restart();
-            for (int i = 0; i < ITERATIONS; i++)
-            {
-                var result = _query.FindPath(testCases[i].start, testCases[i].end);
-            }
-            sw.Stop();
-            double fullMs = sw.Elapsed.TotalMilliseconds;
+            double totalMs = sw.Elapsed.TotalMilliseconds;
+            double internalMs = totalInternalTicks / freq;
+            double overheadMs = totalMs - internalMs;
 
             Debug.Log($"[PureBenchmark] {successCount}/{ITERATIONS} succeeded\n" +
-                $"  A* only:    {astarMs:F2}ms (avg: {astarMs/ITERATIONS:F4}ms/path)\n" +
-                $"  Full path:  {fullMs:F2}ms (avg: {fullMs/ITERATIONS:F4}ms/path)");
+                $"  Total (wall):    {totalMs:F2}ms (avg: {totalMs/ITERATIONS:F4}ms/path)\n" +
+                $"  Internal (work): {internalMs:F2}ms (avg: {internalMs/ITERATIONS:F4}ms/path)\n" +
+                $"  Overhead (diff): {overheadMs:F2}ms ({overheadMs/totalMs*100:F1}%)");
         }
 
         /// <summary>

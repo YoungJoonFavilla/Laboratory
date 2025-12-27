@@ -14,10 +14,6 @@ namespace NavMesh2D.Pathfinding
     /// </summary>
     public class TriangleAStar
     {
-        // Fixed64 Q31.32 포맷 상수
-        private const int SHIFT = 32;
-        private const long ONE_L = 4294967296L; // 1L << 32
-
         private NavMesh2DData _navMesh;
 
         // 경로 찾기 결과
@@ -30,6 +26,7 @@ namespace NavMesh2D.Pathfinding
             public Vector2Fixed End;
             public int ExploredCount;
 
+#if NAVMESH_PROFILING
             // 디버그용 타이밍 (ticks)
             public long TicksExtractMin;
             public long TicksGetTriangle;
@@ -37,6 +34,7 @@ namespace NavMesh2D.Pathfinding
             public long TicksHeuristic;
             public long TicksHeapOps;
             public long TicksFindTriangle;
+#endif
         }
 
         public struct Portal
@@ -85,12 +83,13 @@ namespace NavMesh2D.Pathfinding
                 End = end
             };
 
-            // 타이밍 변수
+#if NAVMESH_PROFILING
             long ticksExtractMin = 0, ticksGetTriangle = 0, ticksMoveCost = 0;
             long ticksHeuristic = 0, ticksHeapOps = 0, ticksFindTriangle = 0;
             long t0, t1;
-
             t0 = Stopwatch.GetTimestamp();
+#endif
+
             int startTri = _navMesh.FindTriangleContainingPoint(start);
             int endTri = _navMesh.FindTriangleContainingPoint(end);
 
@@ -98,8 +97,11 @@ namespace NavMesh2D.Pathfinding
                 startTri = _navMesh.FindNearestTriangle(start);
             if (endTri < 0)
                 endTri = _navMesh.FindNearestTriangle(end);
+
+#if NAVMESH_PROFILING
             t1 = Stopwatch.GetTimestamp();
             ticksFindTriangle += (t1 - t0);
+#endif
 
             if (startTri < 0 || endTri < 0)
                 return result;
@@ -120,15 +122,20 @@ namespace NavMesh2D.Pathfinding
             _openSet.Clear();
             int exploredCount = 0;
 
+#if NAVMESH_PROFILING
             t0 = Stopwatch.GetTimestamp();
+#endif
             long hStartRaw = ChebyshevRaw(startX, startY, endX, endY);
+#if NAVMESH_PROFILING
             t1 = Stopwatch.GetTimestamp();
             ticksHeuristic += (t1 - t0);
-
             t0 = Stopwatch.GetTimestamp();
+#endif
             _openSet.Insert(startTri, 0L, hStartRaw);
+#if NAVMESH_PROFILING
             t1 = Stopwatch.GetTimestamp();
             ticksHeapOps += (t1 - t0);
+#endif
 
             _gScore[startTri] = 0L;
             _lastEntryEdge[startTri] = -1;
@@ -137,22 +144,28 @@ namespace NavMesh2D.Pathfinding
 
             while (_openSet.Count > 0)
             {
+#if NAVMESH_PROFILING
                 t0 = Stopwatch.GetTimestamp();
-                var (currentTri, _, _) = _openSet.ExtractMin();
+#endif
+                _openSet.ExtractMin(out int currentTri);
+#if NAVMESH_PROFILING
                 t1 = Stopwatch.GetTimestamp();
                 ticksExtractMin += (t1 - t0);
+#endif
                 exploredCount++;
 
                 if (currentTri == endTri)
                 {
                     result.Success = true;
                     result.ExploredCount = exploredCount;
+#if NAVMESH_PROFILING
                     result.TicksExtractMin = ticksExtractMin;
                     result.TicksGetTriangle = ticksGetTriangle;
                     result.TicksMoveCost = ticksMoveCost;
                     result.TicksHeuristic = ticksHeuristic;
                     result.TicksHeapOps = ticksHeapOps;
                     result.TicksFindTriangle = ticksFindTriangle;
+#endif
                     ReconstructPath(result, currentTri);
                     CheckGenerationOverflow();
                     return result;
@@ -161,10 +174,14 @@ namespace NavMesh2D.Pathfinding
                 _inClosedSet[currentTri] = _generation;
                 int entryEdge = _lastEntryEdge[currentTri];
 
+#if NAVMESH_PROFILING
                 t0 = Stopwatch.GetTimestamp();
+#endif
                 var triangle = _navMesh.GetTriangle(currentTri);
+#if NAVMESH_PROFILING
                 t1 = Stopwatch.GetTimestamp();
                 ticksGetTriangle += (t1 - t0);
+#endif
 
                 for (int exitEdge = 0; exitEdge < 3; exitEdge++)
                 {
@@ -172,12 +189,16 @@ namespace NavMesh2D.Pathfinding
                     if (neighbor < 0 || _inClosedSet[neighbor] == _generation)
                         continue;
 
+                    // 에지 중심 한 번만 계산 (Move/Heuristic 공용)
+                    _navMesh.GetEdgeCenterRaw(currentTri, exitEdge, out long ecX, out long ecY);
+
                     // 이동 비용 계산
+#if NAVMESH_PROFILING
                     t0 = Stopwatch.GetTimestamp();
+#endif
                     long moveCostRaw;
                     if (entryEdge < 0)
                     {
-                        _navMesh.GetEdgeCenterRaw(currentTri, exitEdge, out long ecX, out long ecY);
                         moveCostRaw = DistanceRaw(startX, startY, ecX, ecY);
                     }
                     else
@@ -188,12 +209,13 @@ namespace NavMesh2D.Pathfinding
 
                     if (neighbor == endTri)
                     {
-                        _navMesh.GetEdgeCenterRaw(currentTri, exitEdge, out long ecX, out long ecY);
                         long finalLegRaw = DistanceRaw(ecX, ecY, endX, endY);
                         tentativeGRaw += finalLegRaw;
                     }
+#if NAVMESH_PROFILING
                     t1 = Stopwatch.GetTimestamp();
                     ticksMoveCost += (t1 - t0);
+#endif
 
                     bool isFirstVisit = _nodeGeneration[neighbor] != _generation;
                     if (isFirstVisit || tentativeGRaw < _gScore[neighbor])
@@ -203,22 +225,16 @@ namespace NavMesh2D.Pathfinding
                         _lastEntryEdge[neighbor] = _navMesh.GetNeighborEntryEdge(currentTri, exitEdge);
                         _nodeGeneration[neighbor] = _generation;
 
-                        // 휴리스틱 (Chebyshev - sqrt 없음)
+                        // 휴리스틱 (Chebyshev - sqrt 없음) - ecX, ecY 재사용
+#if NAVMESH_PROFILING
                         t0 = Stopwatch.GetTimestamp();
-                        long hRaw;
-                        if (neighbor == endTri)
-                        {
-                            hRaw = 0L;
-                        }
-                        else
-                        {
-                            _navMesh.GetEdgeCenterRaw(currentTri, exitEdge, out long ecX, out long ecY);
-                            hRaw = ChebyshevRaw(ecX, ecY, endX, endY);
-                        }
+#endif
+                        long hRaw = (neighbor == endTri) ? 0L : ChebyshevRaw(ecX, ecY, endX, endY);
+#if NAVMESH_PROFILING
                         t1 = Stopwatch.GetTimestamp();
                         ticksHeuristic += (t1 - t0);
-
                         t0 = Stopwatch.GetTimestamp();
+#endif
                         if (_openSet.Contains(neighbor))
                         {
                             _openSet.UpdatePriority(neighbor, tentativeGRaw, hRaw);
@@ -227,30 +243,45 @@ namespace NavMesh2D.Pathfinding
                         {
                             _openSet.Insert(neighbor, tentativeGRaw, hRaw);
                         }
+#if NAVMESH_PROFILING
                         t1 = Stopwatch.GetTimestamp();
                         ticksHeapOps += (t1 - t0);
+#endif
                     }
                 }
             }
 
             result.ExploredCount = exploredCount;
+#if NAVMESH_PROFILING
             result.TicksExtractMin = ticksExtractMin;
             result.TicksGetTriangle = ticksGetTriangle;
             result.TicksMoveCost = ticksMoveCost;
             result.TicksHeuristic = ticksHeuristic;
             result.TicksHeapOps = ticksHeapOps;
             result.TicksFindTriangle = ticksFindTriangle;
+#endif
             CheckGenerationOverflow();
             return result;
         }
 
+        /// <summary>
+        /// Octagonal Distance 근사 (sqrt 없음, ~97% 정확도)
+        /// dist ≈ max(|dx|, |dy|) + 0.41421356 * min(|dx|, |dy|)
+        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private long DistanceRaw(long x1, long y1, long x2, long y2)
         {
             long dx = x2 - x1;
             long dy = y2 - y1;
-            long sqrDistRaw = MulRaw(dx, dx) + MulRaw(dy, dy);
-            return SqrtRaw(sqrDistRaw);
+            if (dx < 0) dx = -dx;
+            if (dy < 0) dy = -dy;
+
+            long minD, maxD;
+            if (dx < dy) { minD = dx; maxD = dy; }
+            else { minD = dy; maxD = dx; }
+
+            // 0.41421356 ≈ 27/64 = 0.421875 (98.3% accurate)
+            return maxD + ((minD * 27) >> 6);
         }
 
         /// <summary>
@@ -264,94 +295,6 @@ namespace NavMesh2D.Pathfinding
             if (dx < 0) dx = -dx;
             if (dy < 0) dy = -dy;
             return (dx > dy) ? dx : dy;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private long MulRaw(long a, long b)
-        {
-            bool negA = a < 0;
-            bool negB = b < 0;
-            if (negA) a = -a;
-            if (negB) b = -b;
-
-            ulong aLo = (ulong)a & 0xFFFFFFFF;
-            ulong aHi = (ulong)a >> 32;
-            ulong bLo = (ulong)b & 0xFFFFFFFF;
-            ulong bHi = (ulong)b >> 32;
-
-            ulong loLo = aLo * bLo;
-            ulong loHi = aLo * bHi;
-            ulong hiLo = aHi * bLo;
-            ulong hiHi = aHi * bHi;
-
-            ulong mid = loHi + hiLo + (loLo >> 32);
-            ulong result = hiHi + (mid >> 32);
-            result = (result << 32) | (mid & 0xFFFFFFFF);
-
-            if ((loLo & 0x80000000) != 0)
-                result++;
-
-            long signedResult = (long)result;
-            return (negA != negB) ? -signedResult : signedResult;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private long SqrtRaw(long x)
-        {
-            if (x <= 0) return 0;
-
-            ulong num = (ulong)x;
-            ulong result = 0UL;
-            ulong bit = 1UL << 62;
-
-            while (bit > num)
-                bit >>= 2;
-
-            while (bit != 0)
-            {
-                if (num >= result + bit)
-                {
-                    num -= result + bit;
-                    result = (result >> 1) + bit;
-                }
-                else
-                {
-                    result >>= 1;
-                }
-                bit >>= 2;
-            }
-
-            if (num > ((1UL << SHIFT) - 1))
-            {
-                num -= result;
-                num = (num << SHIFT) - 0x80000000UL;
-                result = (result << SHIFT) + 0x80000000UL;
-            }
-            else
-            {
-                num <<= SHIFT;
-                result <<= SHIFT;
-            }
-
-            bit = 1UL << (SHIFT - 2);
-            while (bit != 0)
-            {
-                if (num >= result + bit)
-                {
-                    num -= result + bit;
-                    result = (result >> 1) + bit;
-                }
-                else
-                {
-                    result >>= 1;
-                }
-                bit >>= 2;
-            }
-
-            if (num > result && (num - result) > (result >> 1))
-                result++;
-
-            return (long)result;
         }
 
         private void CheckGenerationOverflow()

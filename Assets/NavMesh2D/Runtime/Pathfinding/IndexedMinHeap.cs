@@ -1,36 +1,34 @@
-using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 
 namespace NavMesh2D.Pathfinding
 {
     /// <summary>
-    /// A*용 Indexed Min-Heap (배열 기반 최적화)
-    /// Dictionary 대신 배열 + Generation 트릭 사용
+    /// A*용 Indexed Min-Heap (struct 기반 최적화)
+    /// - FScore 캐싱으로 비교 시 덧셈 제거
+    /// - struct로 힙 할당 제거
+    /// - AggressiveInlining으로 호출 오버헤드 제거
     /// </summary>
-    public class IndexedMinHeap
+    public struct IndexedMinHeap
     {
         private struct HeapNode
         {
             public int TriangleIndex;
-            public long GScore;
-            public long HScore;
-            public long FScore => GScore + HScore;
-
-            public HeapNode(int triangleIndex, long g, long h)
-            {
-                TriangleIndex = triangleIndex;
-                GScore = g;
-                HScore = h;
-            }
+            public long FScore;  // G+H 미리 계산해서 저장
         }
 
-        private readonly HeapNode[] _heap;
-        private readonly int[] _heapPosition;      // triangleIndex → heap position
-        private readonly int[] _positionGeneration; // 해당 position이 유효한 generation
+        private HeapNode[] _heap;
+        private int[] _heapPosition;
+        private int[] _positionGeneration;
         private int _heapCount;
         private int _generation;
-        private readonly int _maxCapacity;
+        private int _maxCapacity;
+        private bool _initialized;
 
-        public int Count => _heapCount;
+        public int Count
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _heapCount;
+        }
 
         public IndexedMinHeap(int maxTriangleCount)
         {
@@ -40,14 +38,15 @@ namespace NavMesh2D.Pathfinding
             _positionGeneration = new int[maxTriangleCount];
             _heapCount = 0;
             _generation = 0;
+            _initialized = true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Clear()
         {
             _heapCount = 0;
             _generation++;
 
-            // Generation 오버플로우 체크
             if (_generation == int.MaxValue)
             {
                 _generation = 1;
@@ -55,33 +54,28 @@ namespace NavMesh2D.Pathfinding
             }
         }
 
-        /// <summary>
-        /// 삼각형이 힙에 있는지 확인 - O(1)
-        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool Contains(int triangleIndex)
         {
             return _positionGeneration[triangleIndex] == _generation;
         }
 
-        /// <summary>
-        /// 새 노드 추가 - O(log n)
-        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Insert(int triangleIndex, long g, long h)
         {
             int index = _heapCount;
-            _heap[index] = new HeapNode(triangleIndex, g, h);
+            _heap[index].TriangleIndex = triangleIndex;
+            _heap[index].FScore = g + h;  // 미리 계산
             _heapPosition[triangleIndex] = index;
             _positionGeneration[triangleIndex] = _generation;
             _heapCount++;
             SiftUp(index);
         }
 
-        /// <summary>
-        /// 최소 F값 노드 제거 및 반환 - O(log n)
-        /// </summary>
-        public (int TriangleIndex, long GScore, long HScore) ExtractMin()
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void ExtractMin(out int triangleIndex)
         {
-            HeapNode min = _heap[0];
+            triangleIndex = _heap[0].TriangleIndex;
 
             _heapCount--;
             if (_heapCount > 0)
@@ -91,15 +85,10 @@ namespace NavMesh2D.Pathfinding
                 SiftDown(0);
             }
 
-            // min은 더 이상 힙에 없음 (generation 무효화)
-            _positionGeneration[min.TriangleIndex] = 0;
-
-            return (min.TriangleIndex, min.GScore, min.HScore);
+            _positionGeneration[triangleIndex] = 0;
         }
 
-        /// <summary>
-        /// 기존 노드의 우선순위 업데이트 - O(log n)
-        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void UpdatePriority(int triangleIndex, long newG, long newH)
         {
             if (_positionGeneration[triangleIndex] != _generation)
@@ -107,8 +96,8 @@ namespace NavMesh2D.Pathfinding
 
             int index = _heapPosition[triangleIndex];
             long oldF = _heap[index].FScore;
-            _heap[index] = new HeapNode(triangleIndex, newG, newH);
-            long newF = _heap[index].FScore;
+            long newF = newG + newH;
+            _heap[index].FScore = newF;
 
             if (newF < oldF)
             {
@@ -120,49 +109,57 @@ namespace NavMesh2D.Pathfinding
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void SiftUp(int index)
         {
+            HeapNode node = _heap[index];
             while (index > 0)
             {
-                int parent = (index - 1) / 2;
-                if (_heap[index].FScore >= _heap[parent].FScore)
+                int parent = (index - 1) >> 1;
+                if (node.FScore >= _heap[parent].FScore)
                     break;
 
-                Swap(index, parent);
+                _heap[index] = _heap[parent];
+                _heapPosition[_heap[index].TriangleIndex] = index;
                 index = parent;
             }
+            _heap[index] = node;
+            _heapPosition[node.TriangleIndex] = index;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void SiftDown(int index)
         {
+            HeapNode node = _heap[index];
+
             while (true)
             {
                 int smallest = index;
-                int left = 2 * index + 1;
-                int right = 2 * index + 2;
+                long smallestF = node.FScore;
+                int left = (index << 1) + 1;
+                int right = (index << 1) + 2;
 
-                if (left < _heapCount && _heap[left].FScore < _heap[smallest].FScore)
+                if (left < _heapCount && _heap[left].FScore < smallestF)
+                {
                     smallest = left;
+                    smallestF = _heap[left].FScore;
+                }
 
-                if (right < _heapCount && _heap[right].FScore < _heap[smallest].FScore)
+                if (right < _heapCount && _heap[right].FScore < smallestF)
+                {
                     smallest = right;
+                }
 
                 if (smallest == index)
                     break;
 
-                Swap(index, smallest);
+                _heap[index] = _heap[smallest];
+                _heapPosition[_heap[index].TriangleIndex] = index;
                 index = smallest;
             }
-        }
 
-        private void Swap(int a, int b)
-        {
-            HeapNode temp = _heap[a];
-            _heap[a] = _heap[b];
-            _heap[b] = temp;
-
-            _heapPosition[_heap[a].TriangleIndex] = a;
-            _heapPosition[_heap[b].TriangleIndex] = b;
+            _heap[index] = node;
+            _heapPosition[node.TriangleIndex] = index;
         }
     }
 }
