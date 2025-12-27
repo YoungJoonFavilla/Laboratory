@@ -1199,7 +1199,7 @@ namespace NavMesh2D.Demo
                 return;
             }
 
-            const int ITERATIONS = 100000;
+            const int ITERATIONS = 1000;
             var random = new System.Random(42);
 
             // boundary를 Fixed64로 변환
@@ -1210,6 +1210,8 @@ namespace NavMesh2D.Demo
 
             int successCount = 0;
             int failCount = 0;
+            int clampedCount = 0;
+            long findPathTotalMs = 0;
             Fixed64 totalRatio = Fixed64.Zero;
             Fixed64 maxRatio = Fixed64.Zero;
             Fixed64 minRatio = Fixed64.MAX_VALUE;
@@ -1229,17 +1231,30 @@ namespace NavMesh2D.Demo
                 Vector2Fixed start = new Vector2Fixed(startX, startY);
                 Vector2Fixed end = new Vector2Fixed(endX, endY);
 
-                // NavMesh 내부 점만 테스트 (Clamped 케이스 제외)
-                bool startOnNavMesh = _navMesh.FindTriangleContainingPoint(start) >= 0;
-                bool endOnNavMesh = _navMesh.FindTriangleContainingPoint(end) >= 0;
-                if (!startOnNavMesh || !endOnNavMesh) continue; // NavMesh 밖 점은 스킵
+                // NavMesh 밖의 점은 가장 가까운 유효 위치로 클램핑
+                int startTri = _navMesh.FindTriangleContainingPoint(start);
+                int endTri = _navMesh.FindTriangleContainingPoint(end);
+
+                if (startTri < 0)
+                {
+                    start = _query.ClampToNavMesh(start);
+                    clampedCount++;
+                }
+                if (endTri < 0)
+                {
+                    end = _query.ClampToNavMesh(end);
+                    clampedCount++;
+                }
 
                 // 직선 거리
                 Fixed64 straightDist = Vector2Fixed.Distance(start, end);
-                if (straightDist < (Fixed64)0.1) continue; // 너무 가까운 점은 스킵
 
-                // 경로 탐색
+                // 경로 탐색 (시간 측정)
+                var pathSw = Stopwatch.StartNew();
                 var result = _query.FindPath(start, end);
+                pathSw.Stop();
+                findPathTotalMs += pathSw.ElapsedTicks;
+
                 if (!result.Success)
                 {
                     failCount++;
@@ -1251,6 +1266,10 @@ namespace NavMesh2D.Demo
                 }
 
                 successCount++;
+
+                // 같은 점이면 ratio 계산 스킵 (0으로 나누기 방지)
+                if (straightDist == Fixed64.Zero)
+                    continue;
 
                 // Funnel 경로 거리
                 Fixed64 funnelDist = result.PathLength;
@@ -1273,13 +1292,9 @@ namespace NavMesh2D.Demo
                     worstEnd = end;
 
                     // worst case 발견 시 즉시 상세 정보 출력
-                    int startTriRaw = _navMesh.FindTriangleContainingPoint(start);
-                    int endTriRaw = _navMesh.FindTriangleContainingPoint(end);
-                    bool startClamped = startTriRaw < 0;
-                    bool endClamped = endTriRaw < 0;
-                    int startTri = startClamped ? _navMesh.FindNearestTriangle(start) : startTriRaw;
-                    int endTri = endClamped ? _navMesh.FindNearestTriangle(end) : endTriRaw;
-                    Debug.Log($"[PathAccuracyTest] New worst case #{i}: ratio={ratio}, startTri={startTri}, endTri={endTri}, triPath=[{string.Join(",", result.TrianglePath)}], startClamped={startClamped}, endClamped={endClamped}");
+                    int finalStartTri = _navMesh.FindTriangleContainingPoint(start);
+                    int finalEndTri = _navMesh.FindTriangleContainingPoint(end);
+                    Debug.Log($"[PathAccuracyTest] New worst case #{i}: ratio={ratio}, startTri={finalStartTri}, endTri={finalEndTri}, triPath=[{string.Join(",", result.TrianglePath)}]");
                 }
                 if (ratio < minRatio)
                 {
@@ -1291,9 +1306,13 @@ namespace NavMesh2D.Demo
 
             Fixed64 avgRatio = successCount > 0 ? totalRatio / (Fixed64)successCount : Fixed64.Zero;
 
+            int testedCount = successCount + failCount;
+            double findPathMs = (double)findPathTotalMs / Stopwatch.Frequency * 1000.0;
+            double avgFindPathMs = findPathMs / testedCount;
             Fixed64 worstStraight = Vector2Fixed.Distance(worstStart, worstEnd);
-            Debug.Log($"[PathAccuracyTest] {ITERATIONS} iterations, {sw.ElapsedMilliseconds}ms\n" +
-                      $"  Success: {successCount}/{ITERATIONS}\n" +
+            Debug.Log($"[PathAccuracyTest] {ITERATIONS} iterations, {sw.ElapsedMilliseconds}ms (FindPath only: {findPathMs:F0}ms, avg: {avgFindPathMs:F3}ms/path)\n" +
+                      $"  Clamped: {clampedCount} points\n" +
+                      $"  Tested: {testedCount}, Success: {successCount}, Fail: {failCount}\n" +
                       $"  Path/Straight Ratio - Avg: {(float)avgRatio:F4}, Min: {(float)minRatio:F4}, Max: {(float)maxRatio:F4}\n" +
                       $"  Worst case: Start=({(float)worstStart.x:F6},{(float)worstStart.y:F6}), End=({(float)worstEnd.x:F6},{(float)worstEnd.y:F6})\n" +
                       $"  Worst straight dist: {(float)worstStraight:F6}, ratio: {(float)maxRatio:F4}");
@@ -1307,6 +1326,9 @@ namespace NavMesh2D.Demo
             }
         }
 
+        // 버텍스 스냅 허용 거리 (이 거리 이내의 정점은 같은 정점으로 통합)
+        private const float VERTEX_SNAP_THRESHOLD = 0.0001f;
+
         /// <summary>
         /// NavMesh 빌드
         /// </summary>
@@ -1318,21 +1340,28 @@ namespace NavMesh2D.Demo
                 _builder = new NavMeshBuilder();
             }
 
-            // 장애물 변환
+            // 장애물 변환 (버텍스 스냅 적용)
             List<Polygon2D> obstacles = new List<Polygon2D>();
             if (_obstacles == null)
             {
                 _obstacles = new List<PolygonObstacle>();
             }
+
+            // 1. 모든 정점을 수집하고 스냅
+            List<Vector2Fixed> canonicalVertices = new List<Vector2Fixed>();
+
             foreach (var obs in _obstacles)
             {
                 if (obs != null && obs.vertices != null && obs.vertices.Length >= 3)
                 {
                     Polygon2D poly = new Polygon2D();
-                    poly.Name = obs.name; // 이름 설정
+                    poly.Name = obs.name;
+
                     foreach (var v in obs.vertices)
                     {
-                        poly.AddVertex(new Vector2Fixed((Fixed64)v.x, (Fixed64)v.y));
+                        Vector2Fixed vertex = new Vector2Fixed((Fixed64)v.x, (Fixed64)v.y);
+                        Vector2Fixed snapped = SnapVertex(vertex, canonicalVertices);
+                        poly.AddVertex(snapped);
                     }
                     obstacles.Add(poly);
                 }
@@ -1369,6 +1398,28 @@ namespace NavMesh2D.Demo
             {
                 Debug.LogError("[NavMesh2DDemo] Failed to build NavMesh");
             }
+        }
+
+        /// <summary>
+        /// 정점을 기존 정점 목록에서 가까운 것과 스냅
+        /// </summary>
+        private Vector2Fixed SnapVertex(Vector2Fixed vertex, List<Vector2Fixed> canonicalVertices)
+        {
+            Fixed64 thresholdSqr = (Fixed64)(VERTEX_SNAP_THRESHOLD * VERTEX_SNAP_THRESHOLD);
+
+            // 기존 정점 중 가까운 것 찾기
+            foreach (var canonical in canonicalVertices)
+            {
+                Fixed64 distSqr = Vector2Fixed.SqrDistance(vertex, canonical);
+                if (distSqr < thresholdSqr)
+                {
+                    return canonical; // 기존 정점 사용
+                }
+            }
+
+            // 가까운 것 없으면 새 정점으로 등록
+            canonicalVertices.Add(vertex);
+            return vertex;
         }
 
         /// <summary>
@@ -1787,7 +1838,9 @@ namespace NavMesh2D.Demo
         /// 사각형 장애물 추가
         /// </summary>
         [ContextMenu("Obstacles/Add Rectangle")]
-        public void AddRectangleObstacle()
+        public void AddRectangleObstacle() => AddRectangleObstacle(Vector2.zero);
+
+        public void AddRectangleObstacle(Vector2 center)
         {
             if (_obstacles == null) _obstacles = new List<PolygonObstacle>();
 
@@ -1796,10 +1849,10 @@ namespace NavMesh2D.Demo
                 name = $"Rectangle {_obstacles.Count}",
                 vertices = new Vector2[]
                 {
-                    new Vector2(-2, -1),
-                    new Vector2(2, -1),
-                    new Vector2(2, 1),
-                    new Vector2(-2, 1)
+                    center + new Vector2(-2, -1),
+                    center + new Vector2(2, -1),
+                    center + new Vector2(2, 1),
+                    center + new Vector2(-2, 1)
                 }
             };
             _obstacles.Add(obstacle);
@@ -1814,7 +1867,9 @@ namespace NavMesh2D.Demo
         /// 삼각형 장애물 추가
         /// </summary>
         [ContextMenu("Obstacles/Add Triangle")]
-        public void AddTriangleObstacle()
+        public void AddTriangleObstacle() => AddTriangleObstacle(Vector2.zero);
+
+        public void AddTriangleObstacle(Vector2 center)
         {
             if (_obstacles == null) _obstacles = new List<PolygonObstacle>();
 
@@ -1823,9 +1878,9 @@ namespace NavMesh2D.Demo
                 name = $"Triangle {_obstacles.Count}",
                 vertices = new Vector2[]
                 {
-                    new Vector2(0, 2),
-                    new Vector2(-2, -1),
-                    new Vector2(2, -1)
+                    center + new Vector2(0, 2),
+                    center + new Vector2(-2, -1),
+                    center + new Vector2(2, -1)
                 }
             };
             _obstacles.Add(obstacle);
@@ -1840,7 +1895,9 @@ namespace NavMesh2D.Demo
         /// 자유 폴리곤 장애물 추가 (오각형 시작)
         /// </summary>
         [ContextMenu("Obstacles/Add Polygon")]
-        public void AddPolygonObstacle()
+        public void AddPolygonObstacle() => AddPolygonObstacle(Vector2.zero);
+
+        public void AddPolygonObstacle(Vector2 center)
         {
             if (_obstacles == null) _obstacles = new List<PolygonObstacle>();
 
@@ -1852,7 +1909,7 @@ namespace NavMesh2D.Demo
             for (int i = 0; i < segments; i++)
             {
                 float angle = (i / (float)segments) * Mathf.PI * 2f - Mathf.PI / 2f; // 위쪽부터 시작
-                verts[i] = new Vector2(Mathf.Cos(angle) * radius, Mathf.Sin(angle) * radius);
+                verts[i] = center + new Vector2(Mathf.Cos(angle) * radius, Mathf.Sin(angle) * radius);
             }
 
             var obstacle = new PolygonObstacle
@@ -1872,7 +1929,9 @@ namespace NavMesh2D.Demo
         /// 원형 장애물 추가 (8각형 근사)
         /// </summary>
         [ContextMenu("Obstacles/Add Circle (8-gon)")]
-        public void AddCircleObstacle()
+        public void AddCircleObstacle() => AddCircleObstacle(Vector2.zero);
+
+        public void AddCircleObstacle(Vector2 center)
         {
             if (_obstacles == null) _obstacles = new List<PolygonObstacle>();
 
@@ -1883,7 +1942,7 @@ namespace NavMesh2D.Demo
             for (int i = 0; i < segments; i++)
             {
                 float angle = (i / (float)segments) * Mathf.PI * 2f;
-                verts[i] = new Vector2(Mathf.Cos(angle) * radius, Mathf.Sin(angle) * radius);
+                verts[i] = center + new Vector2(Mathf.Cos(angle) * radius, Mathf.Sin(angle) * radius);
             }
 
             var obstacle = new PolygonObstacle
