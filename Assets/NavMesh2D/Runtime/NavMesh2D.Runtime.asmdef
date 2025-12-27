@@ -2,11 +2,13 @@
     "name": "NavMesh2D.Runtime",
     "rootNamespace": "NavMesh2D",
     "references": [
-        "FixedMathSharp.Runtime"
+        "FixedMathSharp.Runtime",
+        "Unity.Burst",
+        "Unity.Collections"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
-    "allowUnsafeCode": false,
+    "allowUnsafeCode": true,
     "overrideReferences": false,
     "precompiledReferences": [],
     "autoReferenced": true,

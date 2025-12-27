@@ -1,7 +1,9 @@
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using FixedMathSharp;
 using NavMesh2D.Geometry;
+using Unity.Collections;
 
 namespace NavMesh2D.Pathfinding
 {
@@ -9,11 +11,31 @@ namespace NavMesh2D.Pathfinding
     /// NavMesh 경로 찾기 통합 API
     /// A* + Funnel Algorithm을 조합하여 최단 경로 제공
     /// </summary>
-    public class NavMeshQuery
+    public class NavMeshQuery : IDisposable
     {
         private NavMesh2DData _navMesh;
         private TriangleAStar _aStar;
         private FunnelAlgorithm _funnel;
+
+        // Burst용 작업 배열 (A*)
+        private NativeArray<long> _burstGScore;
+        private NativeArray<int> _burstCameFrom;
+        private NativeArray<int> _burstLastEntryEdge;
+        private NativeArray<int> _burstNodeGeneration;
+        private NativeArray<int> _burstInClosedSet;
+        private NativeArray<int> _burstOutPath;
+        private NativeMinHeap _burstHeap;
+        private int _burstGeneration;
+
+        // Burst용 작업 배열 (Funnel)
+        private NativeArray<long> _burstPortalLeftX;
+        private NativeArray<long> _burstPortalLeftY;
+        private NativeArray<long> _burstPortalRightX;
+        private NativeArray<long> _burstPortalRightY;
+        private NativeArray<long> _burstFunnelPathX;
+        private NativeArray<long> _burstFunnelPathY;
+
+        private bool _burstInitialized;
 
         /// <summary>
         /// 경로 찾기 결과
@@ -61,6 +83,274 @@ namespace NavMesh2D.Pathfinding
             _navMesh.EnsureSpatialGrid(); // 런타임 로드 시 Grid 빌드 보장
             _aStar = new TriangleAStar(navMesh);
             _funnel = new FunnelAlgorithm();
+        }
+
+        /// <summary>
+        /// Burst용 NativeArray 초기화
+        /// </summary>
+        public void InitializeBurst()
+        {
+            if (_burstInitialized) return;
+
+            _navMesh.EnsureNativeArrays();
+            int triCount = _navMesh.TriangleCount;
+
+            // A* 배열
+            _burstGScore = new NativeArray<long>(triCount, Allocator.Persistent);
+            _burstCameFrom = new NativeArray<int>(triCount, Allocator.Persistent);
+            _burstLastEntryEdge = new NativeArray<int>(triCount, Allocator.Persistent);
+            _burstNodeGeneration = new NativeArray<int>(triCount, Allocator.Persistent);
+            _burstInClosedSet = new NativeArray<int>(triCount, Allocator.Persistent);
+            _burstOutPath = new NativeArray<int>(triCount, Allocator.Persistent);
+            _burstHeap = new NativeMinHeap(triCount, Allocator.Persistent);
+            _burstGeneration = 0;
+
+            // Funnel 배열 (최대 포탈 수 = 삼각형 수 + 2)
+            int maxPortals = triCount + 2;
+            _burstPortalLeftX = new NativeArray<long>(maxPortals, Allocator.Persistent);
+            _burstPortalLeftY = new NativeArray<long>(maxPortals, Allocator.Persistent);
+            _burstPortalRightX = new NativeArray<long>(maxPortals, Allocator.Persistent);
+            _burstPortalRightY = new NativeArray<long>(maxPortals, Allocator.Persistent);
+            _burstFunnelPathX = new NativeArray<long>(maxPortals, Allocator.Persistent);
+            _burstFunnelPathY = new NativeArray<long>(maxPortals, Allocator.Persistent);
+
+            _burstInitialized = true;
+        }
+
+        /// <summary>
+        /// Burst 컴파일된 A* 경로 찾기
+        /// </summary>
+        public PathQueryResult FindPathBurst(Vector2Fixed start, Vector2Fixed end)
+        {
+            if (!_burstInitialized)
+                InitializeBurst();
+
+            PathQueryResult result = new PathQueryResult
+            {
+                Success = false,
+                Path = new List<Vector2Fixed>(),
+                PathLength = Fixed64.Zero,
+                TrianglePath = new List<int>(),
+                Portals = new List<TriangleAStar.Portal>()
+            };
+
+            long startX = start.x.m_rawValue;
+            long startY = start.y.m_rawValue;
+            long endX = end.x.m_rawValue;
+            long endY = end.y.m_rawValue;
+
+            // Grid/Vertex 데이터 캐시
+            var gridData = _navMesh.NativeGridData;
+            var gridOffsets = _navMesh.NativeGridOffsets;
+            var gridCounts = _navMesh.NativeGridCounts;
+            var verticesX = _navMesh.NativeVerticesX;
+            var verticesY = _navMesh.NativeVerticesY;
+            var triangleVertexIndices = _navMesh.NativeTriangleVertexIndices;
+
+            // Burst로 시작/끝 삼각형 찾기
+            int startTri = BurstSpatialQuery.FindTriangleContainingPoint(
+                startX, startY,
+                in gridData, in gridOffsets, in gridCounts,
+                _navMesh.NativeGridMinX, _navMesh.NativeGridMinY,
+                _navMesh.NativeCellWidth, _navMesh.NativeCellHeight,
+                _navMesh.GridResolution,
+                in verticesX, in verticesY, in triangleVertexIndices,
+                _navMesh.TriangleCount);
+
+            int endTri = BurstSpatialQuery.FindTriangleContainingPoint(
+                endX, endY,
+                in gridData, in gridOffsets, in gridCounts,
+                _navMesh.NativeGridMinX, _navMesh.NativeGridMinY,
+                _navMesh.NativeCellWidth, _navMesh.NativeCellHeight,
+                _navMesh.GridResolution,
+                in verticesX, in verticesY, in triangleVertexIndices,
+                _navMesh.TriangleCount);
+
+            if (startTri < 0 || endTri < 0)
+                return result;
+
+            // Burst A* 호출
+            var neighbors = _navMesh.NativeNeighbors;
+            var edgeCentersX = _navMesh.NativeEdgeCentersX;
+            var edgeCentersY = _navMesh.NativeEdgeCentersY;
+            var edgePairDistances = _navMesh.NativeEdgePairDistances;
+            var neighborEntryEdge = _navMesh.NativeNeighborEntryEdge;
+
+            long t0 = Stopwatch.GetTimestamp();
+            int pathLength = BurstAStar.FindPath(
+                in neighbors,
+                in edgeCentersX,
+                in edgeCentersY,
+                in edgePairDistances,
+                in neighborEntryEdge,
+                _navMesh.TriangleCount,
+                startTri, endTri,
+                startX, startY,
+                endX, endY,
+                ref _burstGScore,
+                ref _burstCameFrom,
+                ref _burstLastEntryEdge,
+                ref _burstNodeGeneration,
+                ref _burstInClosedSet,
+                ref _burstGeneration,
+                ref _burstHeap,
+                ref _burstOutPath,
+                _navMesh.TriangleCount
+            );
+            long t1 = Stopwatch.GetTimestamp();
+            result.TicksAStar = t1 - t0;
+
+            if (pathLength < 0)
+                return result;
+
+            // 삼각형 경로 복사
+            for (int i = 0; i < pathLength; i++)
+            {
+                result.TrianglePath.Add(_burstOutPath[i]);
+            }
+
+            // 같은 삼각형이면 직선 경로
+            if (pathLength == 1)
+            {
+                result.Success = true;
+                result.Path.Add(start);
+                result.Path.Add(end);
+                result.PathLength = Vector2Fixed.Distance(start, end);
+                return result;
+            }
+
+            // 포탈 생성 (Burst Funnel용 NativeArray에 직접 작성)
+            t0 = Stopwatch.GetTimestamp();
+
+            // 시작점 포탈
+            _burstPortalLeftX[0] = startX;
+            _burstPortalLeftY[0] = startY;
+            _burstPortalRightX[0] = startX;
+            _burstPortalRightY[0] = startY;
+
+            long prevCenterX = startX;
+            long prevCenterY = startY;
+            int portalIdx = 1;
+
+            for (int i = 0; i < pathLength - 1; i++)
+            {
+                int fromTri = _burstOutPath[i];
+                int toTri = _burstOutPath[i + 1];
+
+                // 공유 에지 찾기
+                for (int edge = 0; edge < 3; edge++)
+                {
+                    if (_navMesh.GetNeighborDirect(fromTri, edge) == toTri)
+                    {
+                        // 에지 정점 가져오기 (raw long으로)
+                        int baseIdx = fromTri * 3;
+                        int v0Idx = triangleVertexIndices[baseIdx + edge];
+                        int v1Idx = triangleVertexIndices[baseIdx + (edge + 1) % 3];
+
+                        long lx = verticesX[v0Idx];
+                        long ly = verticesY[v0Idx];
+                        long rx = verticesX[v1Idx];
+                        long ry = verticesY[v1Idx];
+
+                        // 포탈 중심
+                        long centerX = (lx + rx) >> 1;
+                        long centerY = (ly + ry) >> 1;
+
+                        // 진행 방향
+                        long dirX = centerX - prevCenterX;
+                        long dirY = centerY - prevCenterY;
+
+                        // 포탈 벡터 (Left → Right)
+                        long portalVecX = rx - lx;
+                        long portalVecY = ry - ly;
+
+                        // 외적으로 방향 확인 (시프트하여 오버플로우 방지)
+                        long cross = ((dirX >> 16) * (portalVecY >> 16)) - ((dirY >> 16) * (portalVecX >> 16));
+
+                        if (cross > 0)
+                        {
+                            _burstPortalLeftX[portalIdx] = rx;
+                            _burstPortalLeftY[portalIdx] = ry;
+                            _burstPortalRightX[portalIdx] = lx;
+                            _burstPortalRightY[portalIdx] = ly;
+                        }
+                        else
+                        {
+                            _burstPortalLeftX[portalIdx] = lx;
+                            _burstPortalLeftY[portalIdx] = ly;
+                            _burstPortalRightX[portalIdx] = rx;
+                            _burstPortalRightY[portalIdx] = ry;
+                        }
+
+                        prevCenterX = centerX;
+                        prevCenterY = centerY;
+                        portalIdx++;
+                        break;
+                    }
+                }
+            }
+
+            // 끝점 포탈
+            _burstPortalLeftX[portalIdx] = endX;
+            _burstPortalLeftY[portalIdx] = endY;
+            _burstPortalRightX[portalIdx] = endX;
+            _burstPortalRightY[portalIdx] = endY;
+            portalIdx++;
+
+            // Burst Funnel 호출
+            int funnelPathCount = BurstFunnel.StringPull(
+                startX, startY, endX, endY,
+                in _burstPortalLeftX, in _burstPortalLeftY,
+                in _burstPortalRightX, in _burstPortalRightY,
+                portalIdx,
+                ref _burstFunnelPathX, ref _burstFunnelPathY,
+                _burstFunnelPathX.Length
+            );
+
+            t1 = Stopwatch.GetTimestamp();
+            result.TicksFunnel = t1 - t0;
+
+            // 결과 복사
+            for (int i = 0; i < funnelPathCount; i++)
+            {
+                result.Path.Add(new Vector2Fixed(
+                    Fixed64.FromRaw(_burstFunnelPathX[i]),
+                    Fixed64.FromRaw(_burstFunnelPathY[i])
+                ));
+            }
+
+            result.Success = true;
+            result.PathLength = CalculatePathLength(result.Path);
+
+            return result;
+        }
+
+        /// <summary>
+        /// 리소스 해제
+        /// </summary>
+        public void Dispose()
+        {
+            if (_burstInitialized)
+            {
+                // A* 배열
+                _burstGScore.Dispose();
+                _burstCameFrom.Dispose();
+                _burstLastEntryEdge.Dispose();
+                _burstNodeGeneration.Dispose();
+                _burstInClosedSet.Dispose();
+                _burstOutPath.Dispose();
+                _burstHeap.Dispose();
+
+                // Funnel 배열
+                _burstPortalLeftX.Dispose();
+                _burstPortalLeftY.Dispose();
+                _burstPortalRightX.Dispose();
+                _burstPortalRightY.Dispose();
+                _burstFunnelPathX.Dispose();
+                _burstFunnelPathY.Dispose();
+
+                _burstInitialized = false;
+            }
         }
 
         /// <summary>

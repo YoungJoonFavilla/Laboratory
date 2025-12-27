@@ -1262,6 +1262,86 @@ namespace NavMesh2D.Demo
                 $"  Total:  {totalMs:F2}ms avg: {totalMs/successCount:F4}ms");
         }
 
+        /// <summary>
+        /// Burst A* 벤치마크
+        /// </summary>
+        [ContextMenu("Burst Benchmark (1000)")]
+        public void BurstBenchmark()
+        {
+            if (_query == null)
+            {
+                Debug.LogError("[NavMesh2DDemo] NavMesh not built!");
+                return;
+            }
+
+            const int ITERATIONS = 1000;
+            var random = new System.Random(42);
+
+            Fixed64 minX = (Fixed64)_boundaryMin.x;
+            Fixed64 minY = (Fixed64)_boundaryMin.y;
+            Fixed64 rangeX = (Fixed64)_boundaryMax.x - minX;
+            Fixed64 rangeY = (Fixed64)_boundaryMax.y - minY;
+
+            // 테스트 케이스 미리 생성
+            var testCases = new List<(Vector2Fixed start, Vector2Fixed end)>();
+            for (int i = 0; i < ITERATIONS; i++)
+            {
+                Fixed64 startX = minX + (Fixed64)random.NextDouble() * rangeX;
+                Fixed64 startY = minY + (Fixed64)random.NextDouble() * rangeY;
+                Fixed64 endX = minX + (Fixed64)random.NextDouble() * rangeX;
+                Fixed64 endY = minY + (Fixed64)random.NextDouble() * rangeY;
+
+                var start = new Vector2Fixed(startX, startY);
+                var end = new Vector2Fixed(endX, endY);
+
+                int startTri = _navMesh.FindTriangleContainingPoint(start);
+                int endTri = _navMesh.FindTriangleContainingPoint(end);
+
+                if (startTri < 0)
+                    start = _query.ClampToNavMesh(start);
+                if (endTri < 0)
+                    end = _query.ClampToNavMesh(end);
+
+                testCases.Add((start, end));
+            }
+
+            // Warm-up (Burst JIT 컴파일)
+            _query.InitializeBurst();
+            for (int i = 0; i < 10; i++)
+            {
+                _query.FindPathBurst(testCases[0].start, testCases[0].end);
+            }
+
+            // 기존 A* 벤치마크
+            int managedSuccessCount = 0;
+            var sw = Stopwatch.StartNew();
+            for (int i = 0; i < ITERATIONS; i++)
+            {
+                var result = _query.FindPath(testCases[i].start, testCases[i].end);
+                if (result.Success) managedSuccessCount++;
+            }
+            sw.Stop();
+            double managedMs = sw.Elapsed.TotalMilliseconds;
+
+            // Burst A* 벤치마크
+            int burstSuccessCount = 0;
+            sw.Restart();
+            for (int i = 0; i < ITERATIONS; i++)
+            {
+                var result = _query.FindPathBurst(testCases[i].start, testCases[i].end);
+                if (result.Success) burstSuccessCount++;
+            }
+            sw.Stop();
+            double burstMs = sw.Elapsed.TotalMilliseconds;
+
+            double speedup = managedMs / burstMs;
+
+            Debug.Log($"[BurstBenchmark] {ITERATIONS} iterations\n" +
+                $"  Managed: {managedMs:F2}ms (avg: {managedMs/ITERATIONS:F4}ms/path) success: {managedSuccessCount}\n" +
+                $"  Burst:   {burstMs:F2}ms (avg: {burstMs/ITERATIONS:F4}ms/path) success: {burstSuccessCount}\n" +
+                $"  Speedup: {speedup:F2}x");
+        }
+
         // 버텍스 스냅 허용 거리 (이 거리 이내의 정점은 같은 정점으로 통합)
         private const float VERTEX_SNAP_THRESHOLD = 0.0001f;
 
@@ -2150,6 +2230,13 @@ namespace NavMesh2D.Demo
             {
                 RebuildNavMesh();
             }
+        }
+
+        private void OnDestroy()
+        {
+            // NativeArray 정리
+            _query?.Dispose();
+            _navMesh?.DisposeNativeArrays();
         }
     }
 

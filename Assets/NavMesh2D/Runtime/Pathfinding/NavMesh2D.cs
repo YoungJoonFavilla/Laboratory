@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using FixedMathSharp;
 using NavMesh2D.Geometry;
+using Unity.Collections;
 using UnityEngine;
 
 namespace NavMesh2D.Pathfinding
@@ -48,6 +49,27 @@ namespace NavMesh2D.Pathfinding
         // Neighbors 캐시 (flat 배열로 switch 분기 제거)
         // _neighbors[triIndex * 3 + edge] = 이웃 삼각형 인덱스 (-1이면 없음)
         private int[] _neighbors;
+
+        // Burst용 NativeArray (런타임 전용)
+        private NativeArray<int> _nativeNeighbors;
+        private NativeArray<long> _nativeEdgeCentersX;
+        private NativeArray<long> _nativeEdgeCentersY;
+        private NativeArray<long> _nativeEdgePairDistances;
+        private NativeArray<int> _nativeNeighborEntryEdge;
+
+        // Burst용 Grid 데이터
+        private NativeArray<int> _nativeGridData;
+        private NativeArray<int> _nativeGridOffsets;
+        private NativeArray<int> _nativeGridCounts;
+        private long _nativeGridMinX, _nativeGridMinY;
+        private long _nativeCellWidth, _nativeCellHeight;
+
+        // Burst용 정점 데이터
+        private NativeArray<long> _nativeVerticesX;
+        private NativeArray<long> _nativeVerticesY;
+        private NativeArray<int> _nativeTriangleVertexIndices; // v0,v1,v2 순서로 저장
+
+        private bool _nativeArraysBuilt = false;
 
         /// <summary>
         /// 삼각형 목록
@@ -692,6 +714,117 @@ namespace NavMesh2D.Pathfinding
             return null;
         }
 
+        #region Burst Support
+
+        /// <summary>
+        /// Burst용 NativeArray 빌드
+        /// </summary>
+        public void EnsureNativeArrays()
+        {
+            if (_nativeArraysBuilt) return;
+            if (_neighbors == null) EnsureSpatialGrid();
+
+            int size = _triangles.Count * 3;
+
+            // A* 용 배열
+            _nativeNeighbors = new NativeArray<int>(_neighbors, Allocator.Persistent);
+            _nativeEdgeCentersX = new NativeArray<long>(_edgeCentersX, Allocator.Persistent);
+            _nativeEdgeCentersY = new NativeArray<long>(_edgeCentersY, Allocator.Persistent);
+            _nativeEdgePairDistances = new NativeArray<long>(_edgePairDistances, Allocator.Persistent);
+            _nativeNeighborEntryEdge = new NativeArray<int>(_neighborEntryEdge, Allocator.Persistent);
+
+            // Grid 데이터
+            if (_gridBuilt && _gridData != null)
+            {
+                _nativeGridData = new NativeArray<int>(_gridData, Allocator.Persistent);
+                _nativeGridOffsets = new NativeArray<int>(_gridOffsets, Allocator.Persistent);
+                _nativeGridCounts = new NativeArray<int>(_gridCounts, Allocator.Persistent);
+                _nativeGridMinX = _gridMin.x.m_rawValue;
+                _nativeGridMinY = _gridMin.y.m_rawValue;
+                _nativeCellWidth = _cellWidth.m_rawValue;
+                _nativeCellHeight = _cellHeight.m_rawValue;
+            }
+
+            // 정점 데이터
+            int vertCount = _vertices.Count;
+            var vx = new long[vertCount];
+            var vy = new long[vertCount];
+            for (int i = 0; i < vertCount; i++)
+            {
+                vx[i] = _vertices[i].x.m_rawValue;
+                vy[i] = _vertices[i].y.m_rawValue;
+            }
+            _nativeVerticesX = new NativeArray<long>(vx, Allocator.Persistent);
+            _nativeVerticesY = new NativeArray<long>(vy, Allocator.Persistent);
+
+            // 삼각형 정점 인덱스
+            int triCount = _triangles.Count;
+            var triIndices = new int[triCount * 3];
+            for (int i = 0; i < triCount; i++)
+            {
+                triIndices[i * 3 + 0] = _triangles[i].V0;
+                triIndices[i * 3 + 1] = _triangles[i].V1;
+                triIndices[i * 3 + 2] = _triangles[i].V2;
+            }
+            _nativeTriangleVertexIndices = new NativeArray<int>(triIndices, Allocator.Persistent);
+
+            _nativeArraysBuilt = true;
+        }
+
+        /// <summary>
+        /// NativeArray 해제
+        /// </summary>
+        public void DisposeNativeArrays()
+        {
+            if (!_nativeArraysBuilt) return;
+
+            if (_nativeNeighbors.IsCreated) _nativeNeighbors.Dispose();
+            if (_nativeEdgeCentersX.IsCreated) _nativeEdgeCentersX.Dispose();
+            if (_nativeEdgeCentersY.IsCreated) _nativeEdgeCentersY.Dispose();
+            if (_nativeEdgePairDistances.IsCreated) _nativeEdgePairDistances.Dispose();
+            if (_nativeNeighborEntryEdge.IsCreated) _nativeNeighborEntryEdge.Dispose();
+
+            if (_nativeGridData.IsCreated) _nativeGridData.Dispose();
+            if (_nativeGridOffsets.IsCreated) _nativeGridOffsets.Dispose();
+            if (_nativeGridCounts.IsCreated) _nativeGridCounts.Dispose();
+
+            if (_nativeVerticesX.IsCreated) _nativeVerticesX.Dispose();
+            if (_nativeVerticesY.IsCreated) _nativeVerticesY.Dispose();
+            if (_nativeTriangleVertexIndices.IsCreated) _nativeTriangleVertexIndices.Dispose();
+
+            _nativeArraysBuilt = false;
+        }
+
+        private void OnDestroy()
+        {
+            DisposeNativeArrays();
+        }
+
+        // NativeArray 접근자
+        public NativeArray<int> NativeNeighbors => _nativeNeighbors;
+        public NativeArray<long> NativeEdgeCentersX => _nativeEdgeCentersX;
+        public NativeArray<long> NativeEdgeCentersY => _nativeEdgeCentersY;
+        public NativeArray<long> NativeEdgePairDistances => _nativeEdgePairDistances;
+        public NativeArray<int> NativeNeighborEntryEdge => _nativeNeighborEntryEdge;
+
+        // Grid 접근자
+        public NativeArray<int> NativeGridData => _nativeGridData;
+        public NativeArray<int> NativeGridOffsets => _nativeGridOffsets;
+        public NativeArray<int> NativeGridCounts => _nativeGridCounts;
+        public long NativeGridMinX => _nativeGridMinX;
+        public long NativeGridMinY => _nativeGridMinY;
+        public long NativeCellWidth => _nativeCellWidth;
+        public long NativeCellHeight => _nativeCellHeight;
+        public int GridResolution => GRID_RESOLUTION;
+
+        // 정점 접근자
+        public NativeArray<long> NativeVerticesX => _nativeVerticesX;
+        public NativeArray<long> NativeVerticesY => _nativeVerticesY;
+        public NativeArray<int> NativeTriangleVertexIndices => _nativeTriangleVertexIndices;
+
+        public bool NativeArraysBuilt => _nativeArraysBuilt;
+
+        #endregion
     }
 
     /// <summary>
