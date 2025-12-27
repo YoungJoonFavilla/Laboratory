@@ -21,7 +21,10 @@ namespace NavMesh2D.Pathfinding
 
         // Spatial Grid (런타임 전용, 직렬화 안함)
         private const int GRID_RESOLUTION = 32; // 32x32 그리드
-        private List<int>[] _spatialGrid;
+        // Flattened grid: 단일 배열 + offset 방식 (cache friendly)
+        private int[] _gridData;      // 모든 셀의 삼각형 인덱스 (연속 배열)
+        private int[] _gridOffsets;   // 각 셀의 시작 오프셋
+        private int[] _gridCounts;    // 각 셀의 삼각형 개수
         private Vector2Fixed _gridMin;
         private Vector2Fixed _gridMax;
         private Fixed64 _cellWidth;
@@ -125,14 +128,11 @@ namespace NavMesh2D.Pathfinding
             if (_cellWidth <= Fixed64.Zero) _cellWidth = Fixed64.One;
             if (_cellHeight <= Fixed64.Zero) _cellHeight = Fixed64.One;
 
-            // 3. 그리드 초기화
-            _spatialGrid = new List<int>[GRID_RESOLUTION * GRID_RESOLUTION];
-            for (int i = 0; i < _spatialGrid.Length; i++)
-            {
-                _spatialGrid[i] = new List<int>();
-            }
+            int cellCount = GRID_RESOLUTION * GRID_RESOLUTION;
+            _gridCounts = new int[cellCount];
+            _gridOffsets = new int[cellCount];
 
-            // 4. 각 삼각형을 해당 셀에 등록
+            // 3. 첫 번째 패스: 각 셀의 삼각형 개수 카운트
             for (int triIndex = 0; triIndex < _triangles.Count; triIndex++)
             {
                 var tri = _triangles[triIndex];
@@ -146,19 +146,58 @@ namespace NavMesh2D.Pathfinding
                 Fixed64 maxX = FixedMath.Max(v0.x, FixedMath.Max(v1.x, v2.x));
                 Fixed64 maxY = FixedMath.Max(v0.y, FixedMath.Max(v1.y, v2.y));
 
-                // AABB가 걸치는 셀 범위
                 int cellMinX = GetCellX(minX);
                 int cellMinY = GetCellY(minY);
                 int cellMaxX = GetCellX(maxX);
                 int cellMaxY = GetCellY(maxY);
 
-                // 해당 셀들에 삼각형 등록
                 for (int cy = cellMinY; cy <= cellMaxY; cy++)
                 {
                     for (int cx = cellMinX; cx <= cellMaxX; cx++)
                     {
                         int cellIndex = cy * GRID_RESOLUTION + cx;
-                        _spatialGrid[cellIndex].Add(triIndex);
+                        _gridCounts[cellIndex]++;
+                    }
+                }
+            }
+
+            // 4. 오프셋 계산 (누적 합)
+            int totalEntries = 0;
+            for (int i = 0; i < cellCount; i++)
+            {
+                _gridOffsets[i] = totalEntries;
+                totalEntries += _gridCounts[i];
+            }
+
+            // 5. 데이터 배열 할당 및 채우기
+            _gridData = new int[totalEntries];
+            int[] fillIndex = new int[cellCount]; // 각 셀의 현재 채우기 위치
+
+            for (int triIndex = 0; triIndex < _triangles.Count; triIndex++)
+            {
+                var tri = _triangles[triIndex];
+                var v0 = _vertices[tri.V0];
+                var v1 = _vertices[tri.V1];
+                var v2 = _vertices[tri.V2];
+
+                Fixed64 minX = FixedMath.Min(v0.x, FixedMath.Min(v1.x, v2.x));
+                Fixed64 minY = FixedMath.Min(v0.y, FixedMath.Min(v1.y, v2.y));
+                Fixed64 maxX = FixedMath.Max(v0.x, FixedMath.Max(v1.x, v2.x));
+                Fixed64 maxY = FixedMath.Max(v0.y, FixedMath.Max(v1.y, v2.y));
+
+                int cellMinX = GetCellX(minX);
+                int cellMinY = GetCellY(minY);
+                int cellMaxX = GetCellX(maxX);
+                int cellMaxY = GetCellY(maxY);
+
+                for (int cy = cellMinY; cy <= cellMaxY; cy++)
+                {
+                    for (int cx = cellMinX; cx <= cellMaxX; cx++)
+                    {
+                        int cellIndex = cy * GRID_RESOLUTION + cx;
+                        int dataIndex = _gridOffsets[cellIndex] + fillIndex[cellIndex];
+                        _gridData[dataIndex] = triIndex;
+                        fillIndex[cellIndex]++;
                     }
                 }
             }
@@ -309,7 +348,7 @@ namespace NavMesh2D.Pathfinding
         public int FindTriangleContainingPoint(Vector2Fixed point)
         {
             // Spatial Grid 사용 (빌드된 경우)
-            if (_gridBuilt && _spatialGrid != null)
+            if (_gridBuilt && _gridData != null)
             {
                 // 점이 그리드 범위 밖이면 -1
                 if (point.x < _gridMin.x || point.x > _gridMax.x ||
@@ -322,9 +361,12 @@ namespace NavMesh2D.Pathfinding
                 int cellY = GetCellY(point.y);
                 int cellIndex = cellY * GRID_RESOLUTION + cellX;
 
-                // 해당 셀의 삼각형만 체크
-                foreach (int triIndex in _spatialGrid[cellIndex])
+                // 해당 셀의 삼각형만 체크 (flattened grid)
+                int offset = _gridOffsets[cellIndex];
+                int count = _gridCounts[cellIndex];
+                for (int i = 0; i < count; i++)
                 {
+                    int triIndex = _gridData[offset + i];
                     var geo = GetTriangleGeometry(triIndex);
                     if (geo.ContainsPoint(point))
                         return triIndex;
@@ -359,7 +401,7 @@ namespace NavMesh2D.Pathfinding
         public int FindNearestTriangle(Vector2Fixed point)
         {
             // Spatial Grid 사용
-            if (_gridBuilt && _spatialGrid != null)
+            if (_gridBuilt && _gridData != null)
             {
                 return FindNearestTriangleWithGrid(point);
             }
@@ -431,9 +473,12 @@ namespace NavMesh2D.Pathfinding
 
                         int cellIndex = cy * GRID_RESOLUTION + cx;
 
-                        // 해당 셀의 삼각형들 체크
-                        foreach (int triIndex in _spatialGrid[cellIndex])
+                        // 해당 셀의 삼각형들 체크 (flattened grid)
+                        int offset = _gridOffsets[cellIndex];
+                        int count = _gridCounts[cellIndex];
+                        for (int i = 0; i < count; i++)
                         {
+                            int triIndex = _gridData[offset + i];
                             var geo = GetTriangleGeometry(triIndex);
                             Fixed64 distSqr = Vector2Fixed.SqrDistance(point, geo.Centroid);
 
