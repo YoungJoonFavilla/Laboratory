@@ -16,6 +16,11 @@ namespace NavMesh2D.Geometry
         private List<Vector2Fixed> _vertices = new List<Vector2Fixed>();
 
         /// <summary>
+        /// 폴리곤 이름 (디버깅용)
+        /// </summary>
+        public string Name { get; set; }
+
+        /// <summary>
         /// 정점 목록 (읽기 전용)
         /// </summary>
         public IReadOnlyList<Vector2Fixed> Vertices => _vertices;

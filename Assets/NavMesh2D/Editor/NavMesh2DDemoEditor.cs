@@ -15,6 +15,7 @@ namespace NavMesh2D.Editor
         private NavMesh2DDemo _demo;
         private SerializedProperty _boundaryMinProp;
         private SerializedProperty _boundaryMaxProp;
+        private SerializedProperty _maxTriangleCountProp;
         private SerializedProperty _obstaclesProp;
         private SerializedProperty _visualizerProp;
         private SerializedProperty _navMeshAssetProp;
@@ -22,23 +23,62 @@ namespace NavMesh2D.Editor
         private SerializedProperty _startPointProp;
         private SerializedProperty _endPointProp;
 
+        // Demo Mode
+        private SerializedProperty _useAgentModeProp;
+        private SerializedProperty _agentProp;
+        private SerializedProperty _agentMoveSpeedProp;
+
         private int _selectedObstacleIndex = -1;
         private int _selectedVertexIndex = -1;
 
         private const float HANDLE_SIZE = 0.3f;
         private const float HIT_DISTANCE = 20f;
 
+        // 캐싱용 (성능 최적화)
+        private List<Vector3> _linePointsCache = new List<Vector3>();
+        private Vector3[] _lineArrayCache;  // ToArray() 대신 재사용
+        private bool _needsRepaint = false;
+
+        // 정점 캐싱 (드래그 중 SerializedProperty 접근 최소화)
+        private Vector2[] _cachedVertices;
+        private int _cachedObstacleIndex = -1;
+        private int _cachedVertexCount = -1;  // 배열 재생성 최소화
+        private bool _isDragging = false;
+
+        // GUIContent 캐싱
+        private static GUIContent _maxTriangleCountContent;
+        private static GUIContent _navMeshAssetContent;
+        private static GUIContent _useAgentModeContent;
+        private static GUIContent _agentContent;
+        private static GUIContent _moveSpeedContent;
+
         private void OnEnable()
         {
             _demo = (NavMesh2DDemo)target;
             _boundaryMinProp = serializedObject.FindProperty("_boundaryMin");
             _boundaryMaxProp = serializedObject.FindProperty("_boundaryMax");
+            _maxTriangleCountProp = serializedObject.FindProperty("_maxTriangleCount");
             _obstaclesProp = serializedObject.FindProperty("_obstacles");
             _visualizerProp = serializedObject.FindProperty("_visualizer");
             _navMeshAssetProp = serializedObject.FindProperty("_navMeshAsset");
             _autoRebuildProp = serializedObject.FindProperty("_autoRebuildOnChange");
             _startPointProp = serializedObject.FindProperty("_startPoint");
             _endPointProp = serializedObject.FindProperty("_endPoint");
+
+            // Demo Mode
+            _useAgentModeProp = serializedObject.FindProperty("_useAgentMode");
+            _agentProp = serializedObject.FindProperty("_agent");
+            _agentMoveSpeedProp = serializedObject.FindProperty("_agentMoveSpeed");
+
+            // GUIContent 캐싱 (한 번만 생성)
+            if (_maxTriangleCountContent == null)
+            {
+                _maxTriangleCountContent = new GUIContent("Max Triangle Count", "0이면 세분화 안함. 삼각형이 세분화될수록 경로 정확도가 올라가지만 성능은 낮아짐");
+                _navMeshAssetContent = new GUIContent("NavMesh Asset", "할당하면 .asset 파일에 저장됨");
+                _useAgentModeContent = new GUIContent("Use Agent Mode", "false: 시작/끝점 클릭 모드, true: 에이전트 이동 모드");
+                _agentContent = new GUIContent("Agent", "이동할 에이전트 Transform");
+                _moveSpeedContent = new GUIContent("Move Speed", "에이전트 이동 속도");
+            }
 
             SceneView.duringSceneGui += OnSceneGUI;
         }
@@ -60,13 +100,55 @@ namespace NavMesh2D.Editor
             EditorGUILayout.PropertyField(_boundaryMinProp);
             EditorGUILayout.PropertyField(_boundaryMaxProp);
 
+            // Triangle Count Info
+            int currentTriCount = 0;
+            if (_navMeshAssetProp.objectReferenceValue != null)
+            {
+                var navMeshAsset = _navMeshAssetProp.objectReferenceValue as NavMesh2D.Pathfinding.NavMesh2DData;
+                if (navMeshAsset != null)
+                    currentTriCount = navMeshAsset.TriangleCount;
+            }
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.PropertyField(_maxTriangleCountProp, _maxTriangleCountContent);
+            EditorGUI.BeginDisabledGroup(true);
+            EditorGUILayout.IntField(currentTriCount, GUILayout.Width(50));
+            EditorGUI.EndDisabledGroup();
+            EditorGUILayout.EndHorizontal();
+
+            // Warning if max is set but lower than current
+            if (_maxTriangleCountProp.intValue > 0 && _maxTriangleCountProp.intValue <= currentTriCount && currentTriCount > 0)
+            {
+                EditorGUILayout.HelpBox($"Max({_maxTriangleCountProp.intValue}) ≤ 현재({currentTriCount}): 세분화 안함", MessageType.Info);
+            }
+
             EditorGUILayout.Space();
 
             // Components
             EditorGUILayout.LabelField("Components", EditorStyles.boldLabel);
             EditorGUILayout.PropertyField(_visualizerProp);
-            EditorGUILayout.PropertyField(_navMeshAssetProp, new GUIContent("NavMesh Asset", "할당하면 .asset 파일에 저장됨"));
+            EditorGUILayout.PropertyField(_navMeshAssetProp, _navMeshAssetContent);
             EditorGUILayout.PropertyField(_autoRebuildProp);
+
+            EditorGUILayout.Space();
+
+            // Demo Mode
+            EditorGUILayout.LabelField("Demo Mode", EditorStyles.boldLabel);
+            EditorGUILayout.PropertyField(_useAgentModeProp, _useAgentModeContent);
+
+            // Agent Mode 옵션들 (Agent Mode일 때만 표시)
+            if (_useAgentModeProp.boolValue)
+            {
+                EditorGUI.indentLevel++;
+                EditorGUILayout.PropertyField(_agentProp, _agentContent);
+                EditorGUILayout.PropertyField(_agentMoveSpeedProp, _moveSpeedContent);
+
+                if (_agentProp.objectReferenceValue == null)
+                {
+                    EditorGUILayout.HelpBox("Agent를 할당해주세요. 없으면 Point Mode로 전환됩니다.", MessageType.Warning);
+                }
+                EditorGUI.indentLevel--;
+            }
 
             EditorGUILayout.Space();
 
@@ -221,23 +303,30 @@ namespace NavMesh2D.Editor
             if (_demo == null || _obstaclesProp == null)
                 return;
 
-            serializedObject.Update();
-
             Event e = Event.current;
 
-            // Handle mouse events
-            HandleMouseEvents(e);
-
-            // Draw all obstacles
-            DrawAllObstacles();
-
-            // Draw selected obstacle with handles
-            if (_selectedObstacleIndex >= 0 && _selectedObstacleIndex < _obstaclesProp.arraySize)
+            // Layout/Repaint 이벤트에서만 그리기 처리
+            if (e.type == EventType.Layout || e.type == EventType.Repaint)
             {
-                DrawSelectedObstacleHandles();
+                DrawAllObstaclesOptimized();
             }
 
-            serializedObject.ApplyModifiedProperties();
+            // 마우스 이벤트는 별도 처리
+            if (e.type == EventType.MouseDown || e.type == EventType.MouseUp || e.type == EventType.MouseDrag)
+            {
+                HandleMouseEvents(e);
+            }
+
+            // 핸들은 선택된 장애물이 있을 때만
+            if (_selectedObstacleIndex >= 0 && _selectedObstacleIndex < _obstaclesProp.arraySize)
+            {
+                serializedObject.Update();
+                DrawSelectedObstacleHandles();
+                if (GUI.changed)
+                {
+                    serializedObject.ApplyModifiedProperties();
+                }
+            }
         }
 
         private void HandleMouseEvents(Event e)
@@ -409,41 +498,83 @@ namespace NavMesh2D.Editor
             SceneView.RepaintAll();
         }
 
-        private void DrawAllObstacles()
+        /// <summary>
+        /// 최적화된 장애물 그리기 (배치 드로잉)
+        /// </summary>
+        private void DrawAllObstaclesOptimized()
         {
+            if (_obstaclesProp == null)
+                return;
+
+            // 비선택 장애물 라인들 수집
+            _linePointsCache.Clear();
+
             for (int i = 0; i < _obstaclesProp.arraySize; i++)
             {
-                bool isSelected = i == _selectedObstacleIndex;
-                DrawObstacle(i, isSelected);
+                if (i == _selectedObstacleIndex)
+                    continue; // 선택된 건 나중에 따로
+
+                var obstacle = _obstaclesProp.GetArrayElementAtIndex(i);
+                var verticesProp = obstacle.FindPropertyRelative("vertices");
+                int count = verticesProp.arraySize;
+
+                if (count < 3)
+                    continue;
+
+                for (int v = 0; v < count; v++)
+                {
+                    int next = (v + 1) % count;
+                    Vector2 a = verticesProp.GetArrayElementAtIndex(v).vector2Value;
+                    Vector2 b = verticesProp.GetArrayElementAtIndex(next).vector2Value;
+                    _linePointsCache.Add(new Vector3(a.x, a.y, 0));
+                    _linePointsCache.Add(new Vector3(b.x, b.y, 0));
+                }
+            }
+
+            // 비선택 장애물 일괄 그리기
+            if (_linePointsCache.Count > 0)
+            {
+                Handles.color = new Color(1f, 0.3f, 0.3f, 0.8f);
+                DrawLinesWithCache();
+            }
+
+            // 선택된 장애물 그리기
+            if (_selectedObstacleIndex >= 0 && _selectedObstacleIndex < _obstaclesProp.arraySize)
+            {
+                DrawSelectedObstacle();
             }
         }
 
-        private void DrawObstacle(int obstacleIndex, bool isSelected)
+        /// <summary>
+        /// 선택된 장애물만 그리기 (정점 표시 포함)
+        /// </summary>
+        private void DrawSelectedObstacle()
         {
-            var obstacle = _obstaclesProp.GetArrayElementAtIndex(obstacleIndex);
+            var obstacle = _obstaclesProp.GetArrayElementAtIndex(_selectedObstacleIndex);
             var verticesProp = obstacle.FindPropertyRelative("vertices");
+            int count = verticesProp.arraySize;
 
-            if (verticesProp.arraySize < 3)
+            if (count < 3)
                 return;
 
-            // Draw edges
-            Handles.color = isSelected ? Color.yellow : new Color(1f, 0.3f, 0.3f, 0.8f);
-            for (int i = 0; i < verticesProp.arraySize; i++)
+            // 선택된 장애물 에지 그리기
+            _linePointsCache.Clear();
+            for (int i = 0; i < count; i++)
             {
-                int next = (i + 1) % verticesProp.arraySize;
+                int next = (i + 1) % count;
                 Vector2 a = verticesProp.GetArrayElementAtIndex(i).vector2Value;
                 Vector2 b = verticesProp.GetArrayElementAtIndex(next).vector2Value;
-                Handles.DrawLine(
-                    new Vector3(a.x, a.y, 0),
-                    new Vector3(b.x, b.y, 0),
-                    isSelected ? 3f : 2f
-                );
+                _linePointsCache.Add(new Vector3(a.x, a.y, 0));
+                _linePointsCache.Add(new Vector3(b.x, b.y, 0));
             }
 
-            // Draw vertices as squares (only for selected obstacle)
-            if (isSelected)
+            Handles.color = Color.yellow;
+            DrawLinesWithCache();
+
+            // 정점 그리기 (Repaint 이벤트에서만)
+            if (Event.current.type == EventType.Repaint)
             {
-                for (int i = 0; i < verticesProp.arraySize; i++)
+                for (int i = 0; i < count; i++)
                 {
                     Vector2 vertex = verticesProp.GetArrayElementAtIndex(i).vector2Value;
                     Vector3 worldPos = new Vector3(vertex.x, vertex.y, 0);
@@ -454,7 +585,7 @@ namespace NavMesh2D.Editor
                     float size = HandleUtility.GetHandleSize(worldPos) * HANDLE_SIZE;
                     Handles.RectangleHandleCap(0, worldPos, Quaternion.identity, size, EventType.Repaint);
 
-                    // Vertex index label
+                    // 정점 인덱스 라벨
                     Handles.Label(worldPos + Vector3.up * size * 2f, $"[{i}]");
                 }
             }
@@ -464,40 +595,61 @@ namespace NavMesh2D.Editor
         {
             var obstacle = _obstaclesProp.GetArrayElementAtIndex(_selectedObstacleIndex);
             var verticesProp = obstacle.FindPropertyRelative("vertices");
+            int vertCount = verticesProp.arraySize;
 
-            if (verticesProp.arraySize < 3)
+            if (vertCount < 3)
                 return;
 
-            // Calculate center
-            Vector2 center = Vector2.zero;
-            for (int i = 0; i < verticesProp.arraySize; i++)
+            // 캐시 갱신 (장애물 변경 시 또는 드래그 아닐 때만)
+            bool needsRefresh = _cachedObstacleIndex != _selectedObstacleIndex ||
+                                _cachedVertexCount != vertCount ||
+                                !_isDragging;
+
+            if (needsRefresh)
             {
-                center += verticesProp.GetArrayElementAtIndex(i).vector2Value;
+                // 배열 재생성은 크기가 다를 때만
+                if (_cachedVertices == null || _cachedVertices.Length < vertCount)
+                {
+                    _cachedVertices = new Vector2[vertCount];
+                }
+                for (int i = 0; i < vertCount; i++)
+                {
+                    _cachedVertices[i] = verticesProp.GetArrayElementAtIndex(i).vector2Value;
+                }
+                _cachedObstacleIndex = _selectedObstacleIndex;
+                _cachedVertexCount = vertCount;
             }
-            center /= verticesProp.arraySize;
+
+            // Calculate center from cache
+            Vector2 center = Vector2.zero;
+            for (int i = 0; i < vertCount; i++)
+            {
+                center += _cachedVertices[i];
+            }
+            center /= vertCount;
 
             // Draw center move handle
             EditorGUI.BeginChangeCheck();
             Vector3 newCenter = Handles.PositionHandle(new Vector3(center.x, center.y, 0), Quaternion.identity);
             if (EditorGUI.EndChangeCheck())
             {
+                _isDragging = true;
                 Undo.RecordObject(_demo, "Move Obstacle");
                 Vector2 delta = new Vector2(newCenter.x, newCenter.y) - center;
 
-                for (int i = 0; i < verticesProp.arraySize; i++)
+                for (int i = 0; i < vertCount; i++)
                 {
-                    var vertexProp = verticesProp.GetArrayElementAtIndex(i);
-                    vertexProp.vector2Value += delta;
+                    _cachedVertices[i] += delta;
+                    verticesProp.GetArrayElementAtIndex(i).vector2Value = _cachedVertices[i];
                 }
 
                 EditorUtility.SetDirty(_demo);
             }
 
             // Draw vertex move handles (square handles)
-            for (int i = 0; i < verticesProp.arraySize; i++)
+            for (int i = 0; i < vertCount; i++)
             {
-                var vertexProp = verticesProp.GetArrayElementAtIndex(i);
-                Vector2 vertex = vertexProp.vector2Value;
+                Vector2 vertex = _cachedVertices[i];
                 Vector3 worldPos = new Vector3(vertex.x, vertex.y, 0);
 
                 float size = HandleUtility.GetHandleSize(worldPos) * HANDLE_SIZE;
@@ -513,12 +665,38 @@ namespace NavMesh2D.Editor
 
                 if (EditorGUI.EndChangeCheck())
                 {
+                    _isDragging = true;
                     Undo.RecordObject(_demo, "Move Vertex");
-                    vertexProp.vector2Value = new Vector2(newPos.x, newPos.y);
+                    _cachedVertices[i] = new Vector2(newPos.x, newPos.y);
+                    verticesProp.GetArrayElementAtIndex(i).vector2Value = _cachedVertices[i];
                     _selectedVertexIndex = i;
                     EditorUtility.SetDirty(_demo);
                 }
             }
+
+            // 마우스 업 감지 - 드래그 종료
+            if (Event.current.type == EventType.MouseUp)
+            {
+                _isDragging = false;
+            }
+        }
+
+        /// <summary>
+        /// 캐시된 배열로 라인 그리기 (ToArray 호출 방지)
+        /// </summary>
+        private void DrawLinesWithCache()
+        {
+            int count = _linePointsCache.Count;
+            if (count == 0) return;
+
+            // 배열 크기가 정확히 맞을 때만 재사용, 아니면 재할당
+            if (_lineArrayCache == null || _lineArrayCache.Length != count)
+            {
+                _lineArrayCache = new Vector3[count];
+            }
+
+            _linePointsCache.CopyTo(_lineArrayCache);
+            Handles.DrawLines(_lineArrayCache);
         }
     }
 }

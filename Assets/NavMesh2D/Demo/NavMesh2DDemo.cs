@@ -18,6 +18,7 @@ namespace NavMesh2D.Demo
         [Header("=== NavMesh Settings ===")]
         [SerializeField] private Vector2 _boundaryMin = new Vector2(-10, -10);
         [SerializeField] private Vector2 _boundaryMax = new Vector2(10, 10);
+        [SerializeField] private int _maxTriangleCount = 0; // 0이면 세분화 안함
 
         [Header("=== Obstacles ===")]
         [SerializeField] private List<PolygonObstacle> _obstacles = new List<PolygonObstacle>();
@@ -27,6 +28,12 @@ namespace NavMesh2D.Demo
 
         [Header("=== NavMesh Asset ===")]
         [SerializeField] private NavMesh2DData _navMeshAsset;
+
+        [Header("=== Demo Mode ===")]
+        [Tooltip("false: Point Mode (시작/끝점 클릭), true: Agent Mode (에이전트가 클릭 위치로 이동)")]
+        [SerializeField] private bool _useAgentMode = false;
+        [SerializeField] private Transform _agent;
+        [SerializeField] private float _agentMoveSpeed = 5f;
 
         [Header("=== Debug ===")]
         [SerializeField] private bool _autoRebuildOnChange = true;
@@ -44,6 +51,12 @@ namespace NavMesh2D.Demo
         private NavMeshBuilder _builder;
 
         private bool _isSettingStart = true; // true: 시작점 설정 중, false: 끝점 설정 중
+
+        // Agent Mode 런타임 변수
+        private bool _isAgentMode;  // Start에서 한 번만 읽음
+        private List<Vector2> _agentPath;
+        private int _agentPathIndex;
+        private bool _isAgentMoving;
 
         [Header("=== Background ===")]
         [SerializeField] private bool _createBackground = true;
@@ -85,6 +98,25 @@ namespace NavMesh2D.Demo
             CreateBackground();
             CreateAgents();
             RebuildNavMesh();
+
+            // 모드 설정 (한 번만 읽음)
+            _isAgentMode = _useAgentMode;
+
+            // Agent Mode 유효성 검사
+            if (_isAgentMode && _agent == null)
+            {
+                Debug.LogError("[NavMesh2DDemo] Agent Mode가 활성화되었지만 Agent가 할당되지 않았습니다. Point Mode로 전환합니다.");
+                _isAgentMode = false;
+            }
+
+            if (_isAgentMode)
+            {
+                Debug.Log("[NavMesh2DDemo] Agent Mode 활성화 - 좌클릭으로 에이전트 이동");
+            }
+            else
+            {
+                Debug.Log("[NavMesh2DDemo] Point Mode 활성화 - 좌클릭으로 시작/끝점 설정");
+            }
         }
 
         private void CreateAgents()
@@ -202,6 +234,12 @@ namespace NavMesh2D.Demo
             HandleCameraControl();
             UpdateAllAgents();
             UpdateAgentColors();
+
+            // Agent Mode 이동 처리
+            if (_isAgentMode)
+            {
+                UpdateAgentMovement();
+            }
         }
 
         /// <summary>
@@ -653,7 +691,7 @@ namespace NavMesh2D.Demo
 
             if (mouse == null) return;
 
-            // 좌클릭: 시작점/끝점 설정
+            // 좌클릭 처리
             if (mouse.leftButton.wasPressedThisFrame)
             {
                 Vector2 worldPos = GetMouseWorldPosition();
@@ -668,29 +706,20 @@ namespace NavMesh2D.Demo
                 // 2. 장애물 내부 클릭 시 가장 가까운 안전한 위치로 보정
                 Vector2 safePos = GetSafePosition(worldPos);
 
-                if (_isSettingStart)
+                if (_isAgentMode)
                 {
-                    _startPoint = safePos;
-                    if (safePos != worldPos)
-                        Debug.Log($"[NavMesh2DDemo] Start point adjusted: {worldPos} -> {safePos}");
-                    else
-                        Debug.Log($"[NavMesh2DDemo] Start point set: {safePos}");
+                    // Agent Mode: 클릭 위치로 에이전트 이동
+                    HandleAgentModeClick(safePos);
                 }
                 else
                 {
-                    _endPoint = safePos;
-                    if (safePos != worldPos)
-                        Debug.Log($"[NavMesh2DDemo] End point adjusted: {worldPos} -> {safePos}");
-                    else
-                        Debug.Log($"[NavMesh2DDemo] End point set: {safePos}");
-                    FindAndVisualizePath();
+                    // Point Mode: 시작점/끝점 설정
+                    HandlePointModeClick(worldPos, safePos);
                 }
-
-                _isSettingStart = !_isSettingStart;
             }
 
-            // 우클릭: 경로 초기화
-            if (mouse.rightButton.wasPressedThisFrame)
+            // Point Mode에서만 우클릭 허용
+            if (!_isAgentMode && mouse.rightButton.wasPressedThisFrame)
             {
                 _visualizer?.ClearPath();
                 ClearAllPaths();
@@ -706,6 +735,110 @@ namespace NavMesh2D.Demo
         }
 
         /// <summary>
+        /// Point Mode: 시작점/끝점 설정
+        /// </summary>
+        private void HandlePointModeClick(Vector2 worldPos, Vector2 safePos)
+        {
+            if (_isSettingStart)
+            {
+                _startPoint = safePos;
+                if (safePos != worldPos)
+                    Debug.Log($"[NavMesh2DDemo] Start point adjusted: {worldPos} -> {safePos}");
+                else
+                    Debug.Log($"[NavMesh2DDemo] Start point set: {safePos}");
+            }
+            else
+            {
+                _endPoint = safePos;
+                if (safePos != worldPos)
+                    Debug.Log($"[NavMesh2DDemo] End point adjusted: {worldPos} -> {safePos}");
+                else
+                    Debug.Log($"[NavMesh2DDemo] End point set: {safePos}");
+                FindAndVisualizePath();
+            }
+
+            _isSettingStart = !_isSettingStart;
+        }
+
+        /// <summary>
+        /// Agent Mode: 클릭 위치로 에이전트 이동
+        /// </summary>
+        private void HandleAgentModeClick(Vector2 destination)
+        {
+            if (_agent == null || _query == null)
+                return;
+
+            // 현재 에이전트 위치를 시작점으로
+            Vector2 agentPos = _agent.position;
+            _startPoint = GetSafePosition(agentPos);
+            _endPoint = destination;
+
+            // 경로 찾기
+            Vector2Fixed start = new Vector2Fixed((Fixed64)_startPoint.x, (Fixed64)_startPoint.y);
+            Vector2Fixed end = new Vector2Fixed((Fixed64)_endPoint.x, (Fixed64)_endPoint.y);
+
+            var result = _query.FindPath(start, end);
+
+            if (result.Success && result.Path.Count >= 2)
+            {
+                // 경로 시각화
+                if (_visualizer != null)
+                {
+                    _visualizer.SetPath(result.Path, result.Portals, result.TrianglePath);
+                }
+
+                // 경로를 Vector2 리스트로 변환
+                _agentPath = new List<Vector2>();
+                foreach (var p in result.Path)
+                {
+                    _agentPath.Add(new Vector2((float)p.x, (float)p.y));
+                }
+
+                // 이동 시작
+                _agentPathIndex = 0;
+                _isAgentMoving = true;
+
+                Debug.Log($"[NavMesh2DDemo] Agent moving to {destination}, path waypoints: {_agentPath.Count}");
+            }
+            else
+            {
+                Debug.LogWarning($"[NavMesh2DDemo] No path found to {destination}");
+            }
+        }
+
+        /// <summary>
+        /// Agent Mode: 에이전트 이동 업데이트
+        /// </summary>
+        private void UpdateAgentMovement()
+        {
+            if (!_isAgentMoving || _agent == null || _agentPath == null || _agentPath.Count == 0)
+                return;
+
+            // 다음 웨이포인트까지 이동
+            if (_agentPathIndex >= _agentPath.Count - 1)
+            {
+                // 목적지 도착
+                _isAgentMoving = false;
+                Debug.Log("[NavMesh2DDemo] Agent arrived at destination");
+                return;
+            }
+
+            Vector2 currentPos = _agent.position;
+            Vector2 targetPos = _agentPath[_agentPathIndex + 1];
+
+            float step = _agentMoveSpeed * Time.deltaTime;
+            Vector2 newPos = Vector2.MoveTowards(currentPos, targetPos, step);
+
+            _agent.position = new Vector3(newPos.x, newPos.y, _agent.position.z);
+
+            // 웨이포인트 도착 체크
+            if (Vector2.Distance(newPos, targetPos) < 0.01f)
+            {
+                _agentPathIndex++;
+            }
+        }
+
+        /// <summary>
         /// 점이 boundary 내부에 있는지 확인
         /// </summary>
         private bool IsPointInsideBoundary(Vector2 point)
@@ -715,22 +848,29 @@ namespace NavMesh2D.Demo
         }
 
         /// <summary>
-        /// 장애물 내부라면 가장 가까운 안전한 위치 반환
+        /// 장애물 내부라면 가장 가까운 안전한 위치 반환 (Fixed64)
         /// </summary>
-        private Vector2 GetSafePosition(Vector2 point)
+        private Vector2Fixed GetSafePositionFixed(Vector2Fixed point)
         {
             if (_query == null)
                 return point;
 
-            Vector2Fixed fixedPoint = new Vector2Fixed((Fixed64)point.x, (Fixed64)point.y);
-
             // NavMesh 위에 있으면 그대로 반환
-            if (_query.IsPointOnNavMesh(fixedPoint))
+            if (_query.IsPointOnNavMesh(point))
                 return point;
 
             // NavMesh 위의 가장 가까운 점으로 보정
-            Vector2Fixed clampedPoint = _query.ClampToNavMesh(fixedPoint);
-            return new Vector2((float)clampedPoint.x, (float)clampedPoint.y);
+            return _query.ClampToNavMesh(point);
+        }
+
+        /// <summary>
+        /// 장애물 내부라면 가장 가까운 안전한 위치 반환 (UI/입력용)
+        /// </summary>
+        private Vector2 GetSafePosition(Vector2 point)
+        {
+            Vector2Fixed fixedPoint = new Vector2Fixed((Fixed64)point.x, (Fixed64)point.y);
+            Vector2Fixed result = GetSafePositionFixed(fixedPoint);
+            return new Vector2((float)result.x, (float)result.y);
         }
 
         private Vector2 GetMouseWorldPosition()
@@ -819,6 +959,149 @@ namespace NavMesh2D.Demo
 
             // Triangle 17 분석 (또는 원하는 타겟)
             _navMesh.LogConnectivityDiagnostics(startTri, 17);
+        }
+
+        /// <summary>
+        /// Sign 값 디버깅 - 특정 점이 각 삼각형에 대해 어떤 Sign 값을 갖는지 출력
+        /// </summary>
+        [ContextMenu("Debug/Analyze Point Signs")]
+        public void AnalyzePointSigns()
+        {
+            if (_navMesh == null)
+            {
+                Debug.LogError("[NavMesh2DDemo] NavMesh not built!");
+                return;
+            }
+
+            Vector2Fixed start = new Vector2Fixed((Fixed64)_startPoint.x, (Fixed64)_startPoint.y);
+            Vector2Fixed end = new Vector2Fixed((Fixed64)_endPoint.x, (Fixed64)_endPoint.y);
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"[Sign Analysis] Start=({_startPoint.x:F6}, {_startPoint.y:F6})");
+            sb.AppendLine($"[Sign Analysis] End=({_endPoint.x:F6}, {_endPoint.y:F6})");
+            sb.AppendLine();
+
+            // 각 삼각형에 대해 Sign 값 계산
+            for (int i = 0; i < _navMesh.TriangleCount; i++)
+            {
+                var tri = _navMesh.GetTriangle(i);
+                var v0 = _navMesh.GetVertex(tri.V0);
+                var v1 = _navMesh.GetVertex(tri.V1);
+                var v2 = _navMesh.GetVertex(tri.V2);
+
+                // Start 점에 대한 Sign 값
+                Fixed64 d1 = Sign(start, v0, v1);
+                Fixed64 d2 = Sign(start, v1, v2);
+                Fixed64 d3 = Sign(start, v2, v0);
+
+                bool hasNeg = (d1 < Fixed64.Zero) || (d2 < Fixed64.Zero) || (d3 < Fixed64.Zero);
+                bool hasPos = (d1 > Fixed64.Zero) || (d2 > Fixed64.Zero) || (d3 > Fixed64.Zero);
+                bool contains = !(hasNeg && hasPos);
+
+                if (contains)
+                {
+                    sb.AppendLine($"=== Tri{i} CONTAINS Start ===");
+                    sb.AppendLine($"  V0={tri.V0} ({(float)v0.x:F2}, {(float)v0.y:F2})");
+                    sb.AppendLine($"  V1={tri.V1} ({(float)v1.x:F2}, {(float)v1.y:F2})");
+                    sb.AppendLine($"  V2={tri.V2} ({(float)v2.x:F2}, {(float)v2.y:F2})");
+                    sb.AppendLine($"  Signs: d1={d1}, d2={d2}, d3={d3}");
+                    sb.AppendLine($"  hasNeg={hasNeg}, hasPos={hasPos}");
+                    sb.AppendLine();
+                }
+
+                // End 점에 대한 Sign 값
+                d1 = Sign(end, v0, v1);
+                d2 = Sign(end, v1, v2);
+                d3 = Sign(end, v2, v0);
+
+                hasNeg = (d1 < Fixed64.Zero) || (d2 < Fixed64.Zero) || (d3 < Fixed64.Zero);
+                hasPos = (d1 > Fixed64.Zero) || (d2 > Fixed64.Zero) || (d3 > Fixed64.Zero);
+                contains = !(hasNeg && hasPos);
+
+                if (contains)
+                {
+                    sb.AppendLine($"=== Tri{i} CONTAINS End ===");
+                    sb.AppendLine($"  V0={tri.V0} ({(float)v0.x:F2}, {(float)v0.y:F2})");
+                    sb.AppendLine($"  V1={tri.V1} ({(float)v1.x:F2}, {(float)v1.y:F2})");
+                    sb.AppendLine($"  V2={tri.V2} ({(float)v2.x:F2}, {(float)v2.y:F2})");
+                    sb.AppendLine($"  Signs: d1={d1}, d2={d2}, d3={d3}");
+                    sb.AppendLine($"  hasNeg={hasNeg}, hasPos={hasPos}");
+                    sb.AppendLine();
+                }
+            }
+
+            Debug.Log(sb.ToString());
+        }
+
+        /// <summary>
+        /// 특정 삼각형 2개의 상세 정보 출력 (Tri69, Tri80 등)
+        /// </summary>
+        [ContextMenu("Debug/Print Tri69 and Tri80")]
+        public void PrintTri69And80()
+        {
+            if (_navMesh == null)
+            {
+                Debug.LogError("[NavMesh2DDemo] NavMesh not built!");
+                return;
+            }
+
+            int[] targets = { 69, 80 };
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("[Triangle Details]");
+
+            foreach (int idx in targets)
+            {
+                if (idx >= _navMesh.TriangleCount)
+                {
+                    sb.AppendLine($"Tri{idx}: OUT OF RANGE (max: {_navMesh.TriangleCount - 1})");
+                    continue;
+                }
+
+                var tri = _navMesh.GetTriangle(idx);
+                var v0 = _navMesh.GetVertex(tri.V0);
+                var v1 = _navMesh.GetVertex(tri.V1);
+                var v2 = _navMesh.GetVertex(tri.V2);
+                var geo = _navMesh.GetTriangleGeometry(idx);
+
+                sb.AppendLine($"Tri{idx}:");
+                sb.AppendLine($"  V0={tri.V0} ({(float)v0.x:F2}, {(float)v0.y:F2})");
+                sb.AppendLine($"  V1={tri.V1} ({(float)v1.x:F2}, {(float)v1.y:F2})");
+                sb.AppendLine($"  V2={tri.V2} ({(float)v2.x:F2}, {(float)v2.y:F2})");
+                sb.AppendLine($"  Centroid: ({(float)geo.Centroid.x:F2}, {(float)geo.Centroid.y:F2})");
+                sb.AppendLine($"  Neighbors: N0={tri.N0}, N1={tri.N1}, N2={tri.N2}");
+                sb.AppendLine();
+            }
+
+            Debug.Log(sb.ToString());
+        }
+
+        private static Fixed64 Sign(Vector2Fixed p1, Vector2Fixed p2, Vector2Fixed p3)
+        {
+            return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
+        }
+
+        /// <summary>
+        /// Start/End가 장애물 내부인지 확인
+        /// </summary>
+        [ContextMenu("Debug/Check Points In Obstacle")]
+        public void CheckPointsInObstacle()
+        {
+            bool startInObstacle = IsPointInsideObstacle(_startPoint);
+            bool endInObstacle = IsPointInsideObstacle(_endPoint);
+
+            int startTri = -1;
+            int endTri = -1;
+            if (_navMesh != null)
+            {
+                Vector2Fixed startFixed = new Vector2Fixed((Fixed64)_startPoint.x, (Fixed64)_startPoint.y);
+                Vector2Fixed endFixed = new Vector2Fixed((Fixed64)_endPoint.x, (Fixed64)_endPoint.y);
+                startTri = _navMesh.FindTriangleContainingPoint(startFixed);
+                endTri = _navMesh.FindTriangleContainingPoint(endFixed);
+            }
+
+            Debug.Log($"[Check Points]\n" +
+                      $"  Start {_startPoint}: inObstacle={startInObstacle}, triangle={startTri}\n" +
+                      $"  End {_endPoint}: inObstacle={endInObstacle}, triangle={endTri}");
         }
 
         /// <summary>
@@ -919,37 +1202,41 @@ namespace NavMesh2D.Demo
             const int ITERATIONS = 100000;
             var random = new System.Random(42);
 
+            // boundary를 Fixed64로 변환
+            Fixed64 minX = (Fixed64)_boundaryMin.x;
+            Fixed64 minY = (Fixed64)_boundaryMin.y;
+            Fixed64 rangeX = (Fixed64)_boundaryMax.x - minX;
+            Fixed64 rangeY = (Fixed64)_boundaryMax.y - minY;
+
             int successCount = 0;
             int failCount = 0;
-            double totalRatio = 0;
-            double maxRatio = 0;
-            double minRatio = double.MaxValue;
+            Fixed64 totalRatio = Fixed64.Zero;
+            Fixed64 maxRatio = Fixed64.Zero;
+            Fixed64 minRatio = Fixed64.MAX_VALUE;
             int worstCaseIndex = -1;
-            Vector2 worstStart = Vector2.zero, worstEnd = Vector2.zero;
+            Vector2Fixed worstStart = Vector2Fixed.Zero, worstEnd = Vector2Fixed.Zero;
 
             var sw = Stopwatch.StartNew();
 
             for (int i = 0; i < ITERATIONS; i++)
             {
-                // 랜덤 시작/끝점 생성
-                float startX = (float)(random.NextDouble() * (_boundaryMax.x - _boundaryMin.x) + _boundaryMin.x);
-                float startY = (float)(random.NextDouble() * (_boundaryMax.y - _boundaryMin.y) + _boundaryMin.y);
-                float endX = (float)(random.NextDouble() * (_boundaryMax.x - _boundaryMin.x) + _boundaryMin.x);
-                float endY = (float)(random.NextDouble() * (_boundaryMax.y - _boundaryMin.y) + _boundaryMin.y);
+                // 랜덤 시작/끝점 생성 (Fixed64로 직접)
+                Fixed64 startX = minX + (Fixed64)random.NextDouble() * rangeX;
+                Fixed64 startY = minY + (Fixed64)random.NextDouble() * rangeY;
+                Fixed64 endX = minX + (Fixed64)random.NextDouble() * rangeX;
+                Fixed64 endY = minY + (Fixed64)random.NextDouble() * rangeY;
 
-                Vector2 startV2 = new Vector2(startX, startY);
-                Vector2 endV2 = new Vector2(endX, endY);
+                Vector2Fixed start = new Vector2Fixed(startX, startY);
+                Vector2Fixed end = new Vector2Fixed(endX, endY);
 
-                // 안전한 위치로 보정
-                startV2 = GetSafePosition(startV2);
-                endV2 = GetSafePosition(endV2);
-
-                Vector2Fixed start = new Vector2Fixed((Fixed64)startV2.x, (Fixed64)startV2.y);
-                Vector2Fixed end = new Vector2Fixed((Fixed64)endV2.x, (Fixed64)endV2.y);
+                // NavMesh 내부 점만 테스트 (Clamped 케이스 제외)
+                bool startOnNavMesh = _navMesh.FindTriangleContainingPoint(start) >= 0;
+                bool endOnNavMesh = _navMesh.FindTriangleContainingPoint(end) >= 0;
+                if (!startOnNavMesh || !endOnNavMesh) continue; // NavMesh 밖 점은 스킵
 
                 // 직선 거리
-                float straightDist = Vector2.Distance(startV2, endV2);
-                if (straightDist < 0.1f) continue; // 너무 가까운 점은 스킵
+                Fixed64 straightDist = Vector2Fixed.Distance(start, end);
+                if (straightDist < (Fixed64)0.1) continue; // 너무 가까운 점은 스킵
 
                 // 경로 탐색
                 var result = _query.FindPath(start, end);
@@ -958,7 +1245,7 @@ namespace NavMesh2D.Demo
                     failCount++;
                     if (failCount <= 5) // 처음 5개 실패만 로그
                     {
-                        Debug.LogWarning($"[PathAccuracyTest] Fail #{failCount}: Start=({startV2.x:F4},{startV2.y:F4}), End=({endV2.x:F4},{endV2.y:F4})");
+                        Debug.LogWarning($"[PathAccuracyTest] Fail #{failCount}: Start=({(float)start.x:F4},{(float)start.y:F4}), End=({(float)end.x:F4},{(float)end.y:F4})");
                     }
                     continue;
                 }
@@ -966,24 +1253,33 @@ namespace NavMesh2D.Demo
                 successCount++;
 
                 // Funnel 경로 거리
-                float funnelDist = (float)result.PathLength;
+                Fixed64 funnelDist = result.PathLength;
 
                 // 비율 계산 (funnel / straight)
-                double ratio = funnelDist / straightDist;
+                Fixed64 ratio = funnelDist / straightDist;
                 totalRatio += ratio;
 
                 // 비정상적으로 높은 비율 디버깅
-                if (ratio > 5.0)
+                if (ratio > (Fixed64)5.0)
                 {
-                    Debug.LogWarning($"[PathAccuracyTest] High ratio {ratio:F2} at iter {i}: straight={straightDist:F4}, funnel={funnelDist:F4}, triPath=[{string.Join(",", result.TrianglePath)}], waypoints={result.Path.Count}");
+                    Debug.LogWarning($"[PathAccuracyTest] High ratio {(float)ratio:F2} at iter {i}: straight={(float)straightDist:F4}, funnel={(float)funnelDist:F4}, triPath=[{string.Join(",", result.TrianglePath)}], waypoints={result.Path.Count}");
                 }
 
                 if (ratio > maxRatio)
                 {
                     maxRatio = ratio;
                     worstCaseIndex = i;
-                    worstStart = startV2;
-                    worstEnd = endV2;
+                    worstStart = start;
+                    worstEnd = end;
+
+                    // worst case 발견 시 즉시 상세 정보 출력
+                    int startTriRaw = _navMesh.FindTriangleContainingPoint(start);
+                    int endTriRaw = _navMesh.FindTriangleContainingPoint(end);
+                    bool startClamped = startTriRaw < 0;
+                    bool endClamped = endTriRaw < 0;
+                    int startTri = startClamped ? _navMesh.FindNearestTriangle(start) : startTriRaw;
+                    int endTri = endClamped ? _navMesh.FindNearestTriangle(end) : endTriRaw;
+                    Debug.Log($"[PathAccuracyTest] New worst case #{i}: ratio={ratio}, startTri={startTri}, endTri={endTri}, triPath=[{string.Join(",", result.TrianglePath)}], startClamped={startClamped}, endClamped={endClamped}");
                 }
                 if (ratio < minRatio)
                 {
@@ -993,20 +1289,20 @@ namespace NavMesh2D.Demo
 
             sw.Stop();
 
-            double avgRatio = successCount > 0 ? totalRatio / successCount : 0;
+            Fixed64 avgRatio = successCount > 0 ? totalRatio / (Fixed64)successCount : Fixed64.Zero;
 
-            float worstStraight = Vector2.Distance(worstStart, worstEnd);
+            Fixed64 worstStraight = Vector2Fixed.Distance(worstStart, worstEnd);
             Debug.Log($"[PathAccuracyTest] {ITERATIONS} iterations, {sw.ElapsedMilliseconds}ms\n" +
                       $"  Success: {successCount}/{ITERATIONS}\n" +
-                      $"  Path/Straight Ratio - Avg: {avgRatio:F4}, Min: {minRatio:F4}, Max: {maxRatio:F4}\n" +
-                      $"  Worst case: Start=({worstStart.x:F6},{worstStart.y:F6}), End=({worstEnd.x:F6},{worstEnd.y:F6})\n" +
-                      $"  Worst straight dist: {worstStraight:F6}, ratio: {maxRatio:F4}");
+                      $"  Path/Straight Ratio - Avg: {(float)avgRatio:F4}, Min: {(float)minRatio:F4}, Max: {(float)maxRatio:F4}\n" +
+                      $"  Worst case: Start=({(float)worstStart.x:F6},{(float)worstStart.y:F6}), End=({(float)worstEnd.x:F6},{(float)worstEnd.y:F6})\n" +
+                      $"  Worst straight dist: {(float)worstStraight:F6}, ratio: {(float)maxRatio:F4}");
 
-            // Worst case를 시작/끝점에 설정
+            // Worst case를 시작/끝점에 설정 (UI용 float 변환은 여기서만)
             if (worstCaseIndex >= 0)
             {
-                _startPoint = worstStart;
-                _endPoint = worstEnd;
+                _startPoint = new Vector2((float)worstStart.x, (float)worstStart.y);
+                _endPoint = new Vector2((float)worstEnd.x, (float)worstEnd.y);
                 Debug.Log($"[PathAccuracyTest] Worst case set to Start/End points. Use 'Calculate Path' to visualize.");
             }
         }
@@ -1033,6 +1329,7 @@ namespace NavMesh2D.Demo
                 if (obs != null && obs.vertices != null && obs.vertices.Length >= 3)
                 {
                     Polygon2D poly = new Polygon2D();
+                    poly.Name = obs.name; // 이름 설정
                     foreach (var v in obs.vertices)
                     {
                         poly.AddVertex(new Vector2Fixed((Fixed64)v.x, (Fixed64)v.y));
@@ -1045,7 +1342,7 @@ namespace NavMesh2D.Demo
             if (_navMeshAsset != null)
             {
                 _navMesh = _navMeshAsset;
-                _builder.BuildFromRect(_navMesh, _boundaryMin, _boundaryMax, obstacles.Count > 0 ? obstacles : null);
+                _builder.BuildFromRect(_navMesh, _boundaryMin, _boundaryMax, obstacles.Count > 0 ? obstacles : null, _maxTriangleCount);
 
 #if UNITY_EDITOR
                 UnityEditor.EditorUtility.SetDirty(_navMeshAsset);
@@ -1106,18 +1403,24 @@ namespace NavMesh2D.Demo
             const int ITERATIONS = 100000;
             var random = new System.Random(42); // 고정 시드로 동일한 테스트
 
-            // 랜덤 시작/끝점 미리 생성
+            // boundary를 Fixed64로 변환
+            Fixed64 minX = (Fixed64)_boundaryMin.x;
+            Fixed64 minY = (Fixed64)_boundaryMin.y;
+            Fixed64 rangeX = (Fixed64)_boundaryMax.x - minX;
+            Fixed64 rangeY = (Fixed64)_boundaryMax.y - minY;
+
+            // 랜덤 시작/끝점 미리 생성 (Fixed64로 직접)
             var testCases = new List<(Vector2Fixed start, Vector2Fixed end)>();
             for (int i = 0; i < ITERATIONS; i++)
             {
-                float startX = (float)(random.NextDouble() * (_boundaryMax.x - _boundaryMin.x) + _boundaryMin.x);
-                float startY = (float)(random.NextDouble() * (_boundaryMax.y - _boundaryMin.y) + _boundaryMin.y);
-                float endX = (float)(random.NextDouble() * (_boundaryMax.x - _boundaryMin.x) + _boundaryMin.x);
-                float endY = (float)(random.NextDouble() * (_boundaryMax.y - _boundaryMin.y) + _boundaryMin.y);
+                Fixed64 startX = minX + (Fixed64)random.NextDouble() * rangeX;
+                Fixed64 startY = minY + (Fixed64)random.NextDouble() * rangeY;
+                Fixed64 endX = minX + (Fixed64)random.NextDouble() * rangeX;
+                Fixed64 endY = minY + (Fixed64)random.NextDouble() * rangeY;
 
                 testCases.Add((
-                    new Vector2Fixed((Fixed64)startX, (Fixed64)startY),
-                    new Vector2Fixed((Fixed64)endX, (Fixed64)endY)
+                    new Vector2Fixed(startX, startY),
+                    new Vector2Fixed(endX, endY)
                 ));
             }
 

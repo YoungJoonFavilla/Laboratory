@@ -72,6 +72,11 @@ namespace NavMesh2D.Demo
         private List<TriangleAStar.Portal> _currentPortals;
         private List<int> _currentTrianglePath;
 
+        // 캐싱 (성능 최적화)
+        private List<Vector3> _edgePointsCache = new List<Vector3>();
+        private Vector3[] _edgeArrayCache;  // ToArray() 대신 재사용
+        private HashSet<long> _drawnEdgesCache = new HashSet<long>();
+
         public NavMesh2DData NavMesh
         {
             get => _navMesh;
@@ -111,65 +116,34 @@ namespace NavMesh2D.Demo
         {
             int triCount = _navMesh.TriangleCount;
 
-            for (int i = 0; i < triCount; i++)
+            // 에지 배치 그리기 (중복 제거 + 배치 처리)
+            if (_showEdges)
             {
-                var tri = _navMesh.GetTriangle(i);
-                Vector3 v0 = ToVector3(_navMesh.GetVertex(tri.V0));
-                Vector3 v1 = ToVector3(_navMesh.GetVertex(tri.V1));
-                Vector3 v2 = ToVector3(_navMesh.GetVertex(tri.V2));
+                DrawEdgesBatched(triCount);
+            }
 
-                // 삼각형 채우기
-                if (_showTriangles)
-                {
-                    Gizmos.color = _triangleFillColor;
-                    DrawFilledTriangle(v0, v1, v2);
-                }
+            // 삼각형 채우기
+            if (_showTriangles)
+            {
+                DrawTrianglesFilled(triCount);
+            }
 
-                // 에지
-                if (_showEdges)
-                {
-                    Gizmos.color = _edgeColor;
-                    Gizmos.DrawLine(v0, v1);
-                    Gizmos.DrawLine(v1, v2);
-                    Gizmos.DrawLine(v2, v0);
-                }
+            // 정점 그리기
+            if (_showVertices)
+            {
+                DrawVertices();
+            }
 
-                // 정점
-                if (_showVertices)
-                {
-                    Gizmos.color = _vertexColor;
-                    Gizmos.DrawSphere(v0, 0.05f);
-                    Gizmos.DrawSphere(v1, 0.05f);
-                    Gizmos.DrawSphere(v2, 0.05f);
-                }
+            // 중심점 그리기
+            if (_showCentroids)
+            {
+                DrawCentroids(triCount);
+            }
 
-                // 중심점
-                if (_showCentroids)
-                {
-                    var geo = _navMesh.GetTriangleGeometry(i);
-                    Vector3 centroid = ToVector3(geo.Centroid);
-                    Gizmos.color = _centroidColor;
-                    Gizmos.DrawSphere(centroid, 0.08f);
-                }
-
-                // 이웃 연결
-                if (_showNeighborConnections)
-                {
-                    var geo = _navMesh.GetTriangleGeometry(i);
-                    Vector3 centroid = ToVector3(geo.Centroid);
-
-                    Gizmos.color = _neighborColor;
-                    for (int e = 0; e < 3; e++)
-                    {
-                        int neighbor = tri.GetNeighbor(e);
-                        if (neighbor >= 0 && neighbor > i) // 중복 방지
-                        {
-                            var neighborGeo = _navMesh.GetTriangleGeometry(neighbor);
-                            Vector3 neighborCentroid = ToVector3(neighborGeo.Centroid);
-                            Gizmos.DrawLine(centroid, neighborCentroid);
-                        }
-                    }
-                }
+            // 이웃 연결 그리기
+            if (_showNeighborConnections)
+            {
+                DrawNeighborConnections(triCount);
             }
 
             // 삼각형 인덱스 표시
@@ -177,6 +151,132 @@ namespace NavMesh2D.Demo
             {
                 DrawAllTriangleIndices();
             }
+        }
+
+        /// <summary>
+        /// 에지 배치 그리기 (중복 제거 + Handles.DrawLines 사용)
+        /// </summary>
+        private void DrawEdgesBatched(int triCount)
+        {
+            _edgePointsCache.Clear();
+            _drawnEdgesCache.Clear();
+
+            for (int i = 0; i < triCount; i++)
+            {
+                var tri = _navMesh.GetTriangle(i);
+
+                // 각 에지를 중복 없이 추가
+                TryAddEdge(tri.V0, tri.V1);
+                TryAddEdge(tri.V1, tri.V2);
+                TryAddEdge(tri.V2, tri.V0);
+            }
+
+#if UNITY_EDITOR
+            if (_edgePointsCache.Count > 0)
+            {
+                UnityEditor.Handles.color = _edgeColor;
+                DrawLinesWithCache();
+            }
+#endif
+        }
+
+        private void TryAddEdge(int v0Index, int v1Index)
+        {
+            // 에지 키 생성 (작은 인덱스가 앞에)
+            long edgeKey = v0Index < v1Index
+                ? ((long)v0Index << 32) | (uint)v1Index
+                : ((long)v1Index << 32) | (uint)v0Index;
+
+            if (_drawnEdgesCache.Contains(edgeKey))
+                return;
+
+            _drawnEdgesCache.Add(edgeKey);
+
+            Vector3 p0 = ToVector3(_navMesh.GetVertex(v0Index));
+            Vector3 p1 = ToVector3(_navMesh.GetVertex(v1Index));
+            _edgePointsCache.Add(p0);
+            _edgePointsCache.Add(p1);
+        }
+
+        /// <summary>
+        /// 삼각형 채우기 (배치)
+        /// </summary>
+        private void DrawTrianglesFilled(int triCount)
+        {
+#if UNITY_EDITOR
+            UnityEditor.Handles.color = _triangleFillColor;
+            for (int i = 0; i < triCount; i++)
+            {
+                var tri = _navMesh.GetTriangle(i);
+                Vector3 v0 = ToVector3(_navMesh.GetVertex(tri.V0));
+                Vector3 v1 = ToVector3(_navMesh.GetVertex(tri.V1));
+                Vector3 v2 = ToVector3(_navMesh.GetVertex(tri.V2));
+                UnityEditor.Handles.DrawAAConvexPolygon(v0, v1, v2);
+            }
+#endif
+        }
+
+        /// <summary>
+        /// 정점 그리기 (중복 제거)
+        /// </summary>
+        private void DrawVertices()
+        {
+            Gizmos.color = _vertexColor;
+            int vertCount = _navMesh.VertexCount;
+            for (int i = 0; i < vertCount; i++)
+            {
+                Vector3 v = ToVector3(_navMesh.GetVertex(i));
+                Gizmos.DrawSphere(v, 0.05f);
+            }
+        }
+
+        /// <summary>
+        /// 중심점 그리기
+        /// </summary>
+        private void DrawCentroids(int triCount)
+        {
+            Gizmos.color = _centroidColor;
+            for (int i = 0; i < triCount; i++)
+            {
+                var geo = _navMesh.GetTriangleGeometry(i);
+                Vector3 centroid = ToVector3(geo.Centroid);
+                Gizmos.DrawSphere(centroid, 0.08f);
+            }
+        }
+
+        /// <summary>
+        /// 이웃 연결 그리기
+        /// </summary>
+        private void DrawNeighborConnections(int triCount)
+        {
+            _edgePointsCache.Clear();
+
+            for (int i = 0; i < triCount; i++)
+            {
+                var tri = _navMesh.GetTriangle(i);
+                var geo = _navMesh.GetTriangleGeometry(i);
+                Vector3 centroid = ToVector3(geo.Centroid);
+
+                for (int e = 0; e < 3; e++)
+                {
+                    int neighbor = tri.GetNeighbor(e);
+                    if (neighbor >= 0 && neighbor > i) // 중복 방지
+                    {
+                        var neighborGeo = _navMesh.GetTriangleGeometry(neighbor);
+                        Vector3 neighborCentroid = ToVector3(neighborGeo.Centroid);
+                        _edgePointsCache.Add(centroid);
+                        _edgePointsCache.Add(neighborCentroid);
+                    }
+                }
+            }
+
+#if UNITY_EDITOR
+            if (_edgePointsCache.Count > 0)
+            {
+                UnityEditor.Handles.color = _neighborColor;
+                DrawLinesWithCache();
+            }
+#endif
         }
 
         private void DrawAllTriangleIndices()
@@ -288,16 +388,6 @@ namespace NavMesh2D.Demo
 #endif
         }
 
-        private void DrawFilledTriangle(Vector3 v0, Vector3 v1, Vector3 v2)
-        {
-            // Unity Gizmos는 직접 삼각형을 채울 수 없으므로
-            // 여러 선으로 근사하거나 Handles.DrawAAConvexPolygon 사용 (에디터 전용)
-#if UNITY_EDITOR
-            UnityEditor.Handles.color = _triangleFillColor;
-            UnityEditor.Handles.DrawAAConvexPolygon(v0, v1, v2);
-#endif
-        }
-
         private void DrawThickLine(Vector3 from, Vector3 to, float width)
         {
             Vector3 dir = (to - from).normalized;
@@ -311,6 +401,26 @@ namespace NavMesh2D.Demo
         private static Vector3 ToVector3(Vector2Fixed v)
         {
             return new Vector3((float)v.x, (float)v.y, 0);
+        }
+
+        /// <summary>
+        /// 캐시된 배열로 라인 그리기 (ToArray 호출 방지)
+        /// </summary>
+        private void DrawLinesWithCache()
+        {
+#if UNITY_EDITOR
+            int count = _edgePointsCache.Count;
+            if (count == 0) return;
+
+            // 배열 크기가 정확히 맞을 때만 재사용
+            if (_edgeArrayCache == null || _edgeArrayCache.Length != count)
+            {
+                _edgeArrayCache = new Vector3[count];
+            }
+
+            _edgePointsCache.CopyTo(_edgeArrayCache);
+            UnityEditor.Handles.DrawLines(_edgeArrayCache);
+#endif
         }
     }
 }

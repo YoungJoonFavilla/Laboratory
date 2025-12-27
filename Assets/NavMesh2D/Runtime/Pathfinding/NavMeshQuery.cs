@@ -127,9 +127,17 @@ namespace NavMesh2D.Pathfinding
             if (triIndex < 0)
                 return point; // NavMesh가 비어있음
 
-            // 삼각형 내부의 가장 가까운 점 찾기
+            // 삼각형 에지의 가장 가까운 점 찾기
             var tri = _navMesh.GetTriangleGeometry(triIndex);
-            return ClosestPointOnTriangle(point, tri.V0, tri.V1, tri.V2);
+            Vector2Fixed closestOnEdge = ClosestPointOnTriangle(point, tri.V0, tri.V1, tri.V2);
+
+            // 에지 위의 점을 삼각형 중심 방향으로 살짝 밀어넣기
+            Vector2Fixed centroid = tri.Centroid;
+            Vector2Fixed toCenter = centroid - closestOnEdge;
+            Fixed64 epsilon = (Fixed64)0.001; // 작은 오프셋
+            Vector2Fixed result = closestOnEdge + toCenter * epsilon;
+
+            return result;
         }
 
         /// <summary>

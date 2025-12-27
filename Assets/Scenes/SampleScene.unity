@@ -396,6 +396,96 @@ MonoBehaviour:
   m_ShadowLayerMask: 1
   m_RenderingLayers: 1
   m_ShadowRenderingLayers: 1
+--- !u!1 &719222789
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 719222791}
+  - component: {fileID: 719222790}
+  m_Layer: 0
+  m_Name: Agent
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!212 &719222790
+SpriteRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 719222789}
+  m_Enabled: 1
+  m_CastShadows: 0
+  m_ReceiveShadows: 0
+  m_DynamicOccludee: 1
+  m_StaticShadowCaster: 0
+  m_MotionVectors: 1
+  m_LightProbeUsage: 1
+  m_ReflectionProbeUsage: 1
+  m_RayTracingMode: 0
+  m_RayTraceProcedural: 0
+  m_RayTracingAccelStructBuildFlagsOverride: 0
+  m_RayTracingAccelStructBuildFlags: 1
+  m_SmallMeshCulling: 1
+  m_ForceMeshLod: -1
+  m_MeshLodSelectionBias: 0
+  m_RenderingLayerMask: 1
+  m_RendererPriority: 0
+  m_Materials:
+  - {fileID: 2100000, guid: 9dfc825aed78fcd4ba02077103263b40, type: 2}
+  m_StaticBatchInfo:
+    firstSubMesh: 0
+    subMeshCount: 0
+  m_StaticBatchRoot: {fileID: 0}
+  m_ProbeAnchor: {fileID: 0}
+  m_LightProbeVolumeOverride: {fileID: 0}
+  m_ScaleInLightmap: 1
+  m_ReceiveGI: 1
+  m_PreserveUVs: 0
+  m_IgnoreNormalsForChartDetection: 0
+  m_ImportantGI: 0
+  m_StitchLightmapSeams: 1
+  m_SelectedEditorRenderState: 0
+  m_MinimumChartSize: 4
+  m_AutoUVMaxDistance: 0.5
+  m_AutoUVMaxAngle: 89
+  m_LightmapParameters: {fileID: 0}
+  m_GlobalIlluminationMeshLod: 0
+  m_SortingLayerID: 0
+  m_SortingLayer: 0
+  m_SortingOrder: 999
+  m_Sprite: {fileID: 21300000, guid: b21434295f4c2a44ca01aa92ef2ec4dc, type: 3}
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_FlipX: 0
+  m_FlipY: 0
+  m_DrawMode: 0
+  m_Size: {x: 0.16, y: 0.16}
+  m_AdaptiveModeThreshold: 0.5
+  m_SpriteTileMode: 0
+  m_WasSpriteAssigned: 1
+  m_MaskInteraction: 0
+  m_SpriteSortPoint: 0
+--- !u!4 &719222791
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 719222789}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -0.15434, y: 1.23829, z: 0}
+  m_LocalScale: {x: 5, y: 5, z: 5}
+  m_ConstrainProportionsScale: 1
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &832575517
 GameObject:
   m_ObjectHideFlags: 0
@@ -456,7 +546,7 @@ GameObject:
   - component: {fileID: 1905140524}
   - component: {fileID: 1905140523}
   m_Layer: 0
-  m_Name: GameObject
+  m_Name: MapImage
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -571,8 +661,8 @@ MonoBehaviour:
   _showVertices: 0
   _showCentroids: 0
   _showNeighborConnections: 0
-  _showTriangleIndices: 1
-  _triangleFillColor: {r: 0.2, g: 0.6, b: 0.9, a: 0.105882354}
+  _showTriangleIndices: 0
+  _triangleFillColor: {r: 0.2, g: 0.6, b: 0.9, a: 0.05882353}
   _edgeColor: {r: 0.1, g: 0.3, b: 0.6, a: 1}
   _vertexColor: {r: 1, g: 0.92156863, b: 0.015686275, a: 1}
   _centroidColor: {r: 0, g: 1, b: 1, a: 1}
@@ -606,6 +696,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: NavMesh2D.Demo::NavMesh2D.Demo.NavMesh2DDemo
   _boundaryMin: {x: -10, y: -10}
   _boundaryMax: {x: 10, y: 10}
+  _maxTriangleCount: 0
   _obstacles:
   - name: Polygon
     vertices:
@@ -677,12 +768,22 @@ MonoBehaviour:
     - {x: -3.2494848, y: -1.2852241}
     - {x: -3.0208442, y: -1.4004147}
     - {x: -2.938843, y: -1.6247505}
-  - name: Polygon 6
+  - name: BGTop
     vertices:
-    - {x: -9.2923155, y: -7.129163}
+    - {x: -10, y: -7.8}
     - {x: -10, y: 10}
-    - {x: 9.001298, y: 8.02479}
-    - {x: -5.153146, y: 5.901146}
+    - {x: 10, y: 10}
+    - {x: 9.038983, y: 7.8016577}
+    - {x: 7.760937, y: 7.672345}
+    - {x: 7.2541046, y: 7.411551}
+    - {x: 7.1082487, y: 7.66359}
+    - {x: -3.6769023, y: 6.10848}
+    - {x: -4.1063557, y: 5.9740276}
+    - {x: -4.266938, y: 5.670536}
+    - {x: -4.588417, y: 5.3908134}
+    - {x: -5.014955, y: 5.162352}
+    - {x: -5.490715, y: 5.1110907}
+    - {x: -9.166737, y: -6.6373343}
   - name: Polygon 7
     vertices:
     - {x: -5.60767, y: -0.15059087}
@@ -694,11 +795,102 @@ MonoBehaviour:
     - {x: -5.1975594, y: 1.1634465}
     - {x: -5.589589, y: 0.90807927}
     - {x: -5.8215175, y: 0.07641734}
+  - name: Polygon 8
+    vertices:
+    - {x: -6.091092, y: -6.1672506}
+    - {x: -6.0877576, y: -5.7275267}
+    - {x: -6.5668297, y: -5.3656716}
+    - {x: -7.1130915, y: -5.377093}
+    - {x: -7.6720695, y: -5.613623}
+    - {x: -7.705114, y: -6.103903}
+    - {x: -7.3499494, y: -6.4075437}
+    - {x: -6.4380517, y: -6.425049}
+  - name: Polygon 9
+    vertices:
+    - {x: -4.3048353, y: -4.892569}
+    - {x: -3.9066937, y: -4.6318955}
+    - {x: -4.471735, y: -4.140087}
+    - {x: -4.7652035, y: -3.8057442}
+    - {x: -5.2356753, y: -3.9578626}
+  - name: Polygon 10
+    vertices:
+    - {x: -2.0291815, y: -2.6459856}
+    - {x: -1.4746273, y: -2.4865024}
+    - {x: -1.407216, y: -2.2024498}
+    - {x: -2.418363, y: -2.3442826}
+    - {x: -2.4723005, y: -2.4941602}
+  - name: Polygon 11
+    vertices:
+    - {x: -2.8892934, y: -3.5597942}
+    - {x: -2.7631853, y: -3.37985}
+    - {x: -3.0285547, y: -3.0136156}
+    - {x: -2.8945456, y: -2.7352622}
+    - {x: -3.1306925, y: -2.7029517}
+    - {x: -3.3581154, y: -2.832031}
+    - {x: -3.334286, y: -3.175128}
+  - name: Polygon 12
+    vertices:
+    - {x: -0.61607516, y: -3.5792532}
+    - {x: 0.49174178, y: -2.718622}
+    - {x: 0.188001, y: -2.5159733}
+    - {x: -0.8618498, y: -3.364212}
+  - name: Rectangle 13
+    vertices:
+    - {x: 0.46845326, y: -2.380289}
+    - {x: 0.76114655, y: -2.5523899}
+    - {x: 1.3209459, y: -2.0856028}
+    - {x: 1.0397553, y: -1.9357867}
+  - name: Polygon 14
+    vertices:
+    - {x: 1.5531802, y: -0.17617917}
+    - {x: 1.7885067, y: -0.10061741}
+    - {x: 1.8075582, y: 0.094463855}
+    - {x: 1.5243485, y: 0.77854216}
+    - {x: 1.1603045, y: 1.2251694}
+    - {x: 0.46043682, y: 1.5065827}
+    - {x: -0.03028977, y: 1.4380019}
+    - {x: -0.0056967735, y: 1.2683783}
+    - {x: 0.27588874, y: 1.2322593}
+    - {x: 0.5738208, y: 1.1953869}
+    - {x: 1.0485786, y: 0.9059069}
+    - {x: 1.3681947, y: 0.38498932}
+    - {x: 1.3097452, y: 0.021434486}
+  - name: Polygon 15
+    vertices:
+    - {x: 3.2293541, y: -0.86648095}
+    - {x: 4.202742, y: -0.08186884}
+    - {x: 3.858173, y: 0.04955226}
+    - {x: 2.9270082, y: -0.7148744}
+  - name: BGBot
+    vertices:
+    - {x: -7.37976, y: -7.507074}
+    - {x: -7.4329476, y: -7.3090897}
+    - {x: -10, y: -7.8}
+    - {x: -10, y: -10}
+    - {x: 10, y: -10}
+    - {x: 10, y: 10}
+    - {x: 9.050459, y: 6.137607}
+    - {x: 9.268695, y: 6.041714}
+    - {x: 6.1322045, y: -4.661544}
+    - {x: 5.485451, y: -4.85481}
+    - {x: 4.6026983, y: -5.5312853}
+    - {x: 4.347538, y: -6.0031104}
+  - name: Polygon 17
+    vertices:
+    - {x: 2.0760505, y: 2.1357539}
+    - {x: 2.9213347, y: 2.1691642}
+    - {x: 2.8159056, y: 2.4463258}
+    - {x: 2.2246764, y: 2.4204032}
+    - {x: 1.8587952, y: 2.4906292}
+    - {x: 1.7662246, y: 2.3172002}
   _visualizer: {fileID: 2049490543}
   _navMeshAsset: {fileID: 11400000, guid: eb26154193c460b48b26659d96a2c118, type: 2}
-  _autoRebuildOnChange: 1
-  _startPoint: {x: -5.41, y: -0.41}
-  _endPoint: {x: -5.4, y: -1.02}
+  _useAgentMode: 1
+  _agent: {fileID: 719222791}
+  _agentMoveSpeed: 5
+  _autoRebuildOnChange: 0
+  _startPoint: {x: -5.2, y: -2.6}
+  _endPoint: {x: -6.05, y: -3.5}
   _cameraZoomMin: 3
   _cameraZoomMax: 10
   _cameraZoomSpeed: 2
@@ -729,3 +921,4 @@ SceneRoots:
   - {fileID: 832575519}
   - {fileID: 1905140524}
   - {fileID: 2049490545}
+  - {fileID: 719222791}

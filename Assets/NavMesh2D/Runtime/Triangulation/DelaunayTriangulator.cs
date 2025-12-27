@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using FixedMathSharp;
 using NavMesh2D.Geometry;
+using UnityEngine;
 
 namespace NavMesh2D.Triangulation
 {
@@ -213,6 +214,16 @@ namespace NavMesh2D.Triangulation
             if (boundary == null || boundary.VertexCount < 3)
             {
                 return _triangles;
+            }
+
+            // 장애물 겹침 검사
+            if (obstacles != null && obstacles.Count > 1)
+            {
+                if (!ValidateNoOverlappingObstacles(obstacles, out string errorMsg))
+                {
+                    Debug.LogError($"[CDT] NavMesh 빌드 실패: {errorMsg}");
+                    return _triangles;
+                }
             }
 
             // 1. 모든 정점 수집
@@ -449,6 +460,130 @@ namespace NavMesh2D.Triangulation
                 Vector2Fixed centroid = tri.Centroid;
                 return !boundary.ContainsPoint(centroid);
             });
+        }
+
+        /// <summary>
+        /// 장애물 폴리곤들이 겹치는지 검사
+        /// </summary>
+        /// <param name="obstacles">장애물 리스트</param>
+        /// <param name="errorMsg">에러 메시지 (실패 시)</param>
+        /// <returns>겹침이 없으면 true</returns>
+        private bool ValidateNoOverlappingObstacles(List<Polygon2D> obstacles, out string errorMsg)
+        {
+            errorMsg = null;
+
+            for (int i = 0; i < obstacles.Count; i++)
+            {
+                for (int j = i + 1; j < obstacles.Count; j++)
+                {
+                    if (PolygonsOverlap(obstacles[i], obstacles[j], i, j, out string detail))
+                    {
+                        string nameI = string.IsNullOrEmpty(obstacles[i].Name) ? $"#{i}" : $"[{obstacles[i].Name}]";
+                        string nameJ = string.IsNullOrEmpty(obstacles[j].Name) ? $"#{j}" : $"[{obstacles[j].Name}]";
+                        errorMsg = $"장애물 {nameI}와 {nameJ}가 겹칩니다. {detail}";
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// 두 폴리곤이 겹치는지 검사 (에지 교차 검사)
+        /// </summary>
+        private bool PolygonsOverlap(Polygon2D polyA, Polygon2D polyB, int indexA, int indexB, out string detail)
+        {
+            detail = null;
+            string nameA = string.IsNullOrEmpty(polyA.Name) ? $"#{indexA}" : polyA.Name;
+            string nameB = string.IsNullOrEmpty(polyB.Name) ? $"#{indexB}" : polyB.Name;
+
+            // 1. 에지 교차 검사
+            for (int i = 0; i < polyA.VertexCount; i++)
+            {
+                int nextI = (i + 1) % polyA.VertexCount;
+                Vector2Fixed a1 = polyA.GetVertex(i);
+                Vector2Fixed a2 = polyA.GetVertex(nextI);
+
+                for (int j = 0; j < polyB.VertexCount; j++)
+                {
+                    int nextJ = (j + 1) % polyB.VertexCount;
+                    Vector2Fixed b1 = polyB.GetVertex(j);
+                    Vector2Fixed b2 = polyB.GetVertex(nextJ);
+
+                    // 공유 에지는 허용 (정확히 같은 에지)
+                    if (EdgesAreIdentical(a1, a2, b1, b2))
+                        continue;
+
+                    // 에지가 교차하는지 검사
+                    if (EdgesIntersect(a1, a2, b1, b2))
+                    {
+                        // Fixed64 raw 값도 출력해서 정확히 비교 가능하게
+                        detail = $"에지 교차 - {nameA}[{i}]-[{nextI}]와 {nameB}[{j}]-[{nextJ}]\n" +
+                                 $"  {nameA}[{i}] = ({a1.x}, {a1.y})\n" +
+                                 $"  {nameA}[{nextI}] = ({a2.x}, {a2.y})\n" +
+                                 $"  {nameB}[{j}] = ({b1.x}, {b1.y})\n" +
+                                 $"  {nameB}[{nextJ}] = ({b2.x}, {b2.y})";
+                        return true;
+                    }
+                }
+            }
+
+            // 2. 포함 관계 검사 (한 폴리곤이 다른 폴리곤 안에 완전히 들어간 경우)
+            // A의 정점 중 B의 정점이 아닌 것이 B 내부에 있는지 확인
+            for (int i = 0; i < polyA.VertexCount; i++)
+            {
+                Vector2Fixed vertA = polyA.GetVertex(i);
+
+                // B의 정점과 공유하는지 확인
+                if (IsSharedVertex(vertA, polyB))
+                    continue;
+
+                if (polyB.ContainsPoint(vertA))
+                {
+                    detail = $"{nameA}의 정점[{i}]({(float)vertA.x:F2},{(float)vertA.y:F2})이 {nameB} 내부에 위치함";
+                    return true;
+                }
+            }
+
+            // B의 정점 중 A의 정점이 아닌 것이 A 내부에 있는지 확인
+            for (int i = 0; i < polyB.VertexCount; i++)
+            {
+                Vector2Fixed vertB = polyB.GetVertex(i);
+
+                // A의 정점과 공유하는지 확인
+                if (IsSharedVertex(vertB, polyA))
+                    continue;
+
+                if (polyA.ContainsPoint(vertB))
+                {
+                    detail = $"{nameB}의 정점[{i}]({(float)vertB.x:F2},{(float)vertB.y:F2})이 {nameA} 내부에 위치함";
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// 두 에지가 동일한지 검사 (순서 무관)
+        /// </summary>
+        private bool EdgesAreIdentical(Vector2Fixed a1, Vector2Fixed a2, Vector2Fixed b1, Vector2Fixed b2)
+        {
+            return (a1 == b1 && a2 == b2) || (a1 == b2 && a2 == b1);
+        }
+
+        /// <summary>
+        /// 점이 폴리곤의 정점 중 하나와 일치하는지 확인
+        /// </summary>
+        private bool IsSharedVertex(Vector2Fixed point, Polygon2D poly)
+        {
+            for (int i = 0; i < poly.VertexCount; i++)
+            {
+                if (point == poly.GetVertex(i))
+                    return true;
+            }
+            return false;
         }
 
         /// <summary>
