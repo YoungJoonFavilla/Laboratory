@@ -33,6 +33,7 @@ namespace NavMesh2D.Editor
         private int _selectedWalkableIndex = -1;
         private int _selectedVertexIndex = -1;
         private bool _isEditingWalkable = false;  // true: 워커블 편집 중, false: 장애물 편집 중
+        private float _maxEdgeLength = 2f;  // Edge Subdivision용 최대 에지 길이
 
         private const float HANDLE_SIZE = 0.3f;
         private const float HIT_DISTANCE = 20f;
@@ -218,6 +219,8 @@ namespace NavMesh2D.Editor
             EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Max Edge Length", GUILayout.Width(100));
+            _maxEdgeLength = EditorGUILayout.FloatField(_maxEdgeLength, GUILayout.Width(50));
             if (GUILayout.Button("Subdivide Edges"))
             {
                 SubdivideSelectedPolygonEdges();
@@ -1455,29 +1458,12 @@ namespace NavMesh2D.Editor
                 return;
             }
 
-            // maxEdgeLength 입력 받기
-            float maxEdgeLength = EditorPrefs.GetFloat("NavMesh2D_MaxEdgeLength", 2f);
-            maxEdgeLength = EditorUtility.DisplayDialogComplex(
-                "Subdivide Edges",
-                $"최대 에지 길이를 입력하세요.\n현재 설정: {maxEdgeLength:F1}\n\n이 길이를 초과하는 에지가 분할됩니다.",
-                "확인 (2.0)", "취소", "확인 (1.0)") switch
-            {
-                0 => 2.0f,
-                2 => 1.0f,
-                _ => -1f  // 취소
-            };
-
-            if (maxEdgeLength < 0)
-                return;
-
-            EditorPrefs.SetFloat("NavMesh2D_MaxEdgeLength", maxEdgeLength);
-
             // Undo 등록
             Undo.RecordObject(_demo, $"Subdivide {typeName} Edges");
             serializedObject.Update();
 
             // 에지 분할 수행
-            int subdivideCount = SubdivideEdges(verticesProp, maxEdgeLength);
+            int subdivideCount = SubdivideEdges(verticesProp, _maxEdgeLength);
 
             serializedObject.ApplyModifiedProperties();
             InvalidateCache();
@@ -1486,11 +1472,11 @@ namespace NavMesh2D.Editor
 
             if (subdivideCount > 0)
             {
-                Debug.Log($"[Subdivide] {typeName} #{targetIndex}: {subdivideCount}개 에지 분할됨 (maxLength={maxEdgeLength:F1})");
+                Debug.Log($"[Subdivide] {typeName} #{targetIndex}: {subdivideCount}개 에지 분할됨 (maxLength={_maxEdgeLength:F1})");
             }
             else
             {
-                Debug.Log($"[Subdivide] {typeName} #{targetIndex}: 분할할 에지 없음 (모든 에지가 {maxEdgeLength:F1} 이하)");
+                Debug.Log($"[Subdivide] {typeName} #{targetIndex}: 분할할 에지 없음 (모든 에지가 {_maxEdgeLength:F1} 이하)");
             }
         }
 
