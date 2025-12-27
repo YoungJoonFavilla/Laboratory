@@ -1070,7 +1070,7 @@ namespace NavMesh2D.Demo
             Fixed64 rangeY = (Fixed64)_boundaryMax.y - minY;
 
             // 누적 타이밍
-            long totalFindTri = 0, totalExtract = 0, totalGetTri = 0;
+            long totalFindTri = 0, totalExtract = 0;
             long totalMove = 0, totalHeur = 0, totalHeap = 0;
             int successCount = 0;
 
@@ -1103,7 +1103,6 @@ namespace NavMesh2D.Demo
 #if NAVMESH_PROFILING
                     totalFindTri += astarResult.TicksFindTriangle;
                     totalExtract += astarResult.TicksExtractMin;
-                    totalGetTri += astarResult.TicksGetTriangle;
                     totalMove += astarResult.TicksMoveCost;
                     totalHeur += astarResult.TicksHeuristic;
                     totalHeap += astarResult.TicksHeapOps;
@@ -1114,18 +1113,16 @@ namespace NavMesh2D.Demo
             // 결과 출력
             double findTriMs = totalFindTri / freq;
             double extractMs = totalExtract / freq;
-            double getTriMs = totalGetTri / freq;
             double moveMs = totalMove / freq;
             double heurMs = totalHeur / freq;
             double heapMs = totalHeap / freq;
-            double totalMs = findTriMs + extractMs + getTriMs + moveMs + heurMs + heapMs;
+            double totalMs = findTriMs + extractMs + moveMs + heurMs + heapMs;
             double avgMs = totalMs / successCount;
 
             Debug.Log($"[PathDetailTest] {successCount}/{ITERATIONS} succeeded\n" +
                 $"  Total A* time: {totalMs:F2}ms (avg: {avgMs:F4}ms/path)\n" +
                 $"  FindTri: {findTriMs:F2}ms ({findTriMs/totalMs*100:F1}%)\n" +
                 $"  Extract: {extractMs:F2}ms ({extractMs/totalMs*100:F1}%)\n" +
-                $"  GetTri:  {getTriMs:F2}ms ({getTriMs/totalMs*100:F1}%)\n" +
                 $"  Move:    {moveMs:F2}ms ({moveMs/totalMs*100:F1}%)\n" +
                 $"  Heur:    {heurMs:F2}ms ({heurMs/totalMs*100:F1}%)\n" +
                 $"  Heap:    {heapMs:F2}ms ({heapMs/totalMs*100:F1}%)");
@@ -1188,8 +1185,7 @@ namespace NavMesh2D.Demo
                     successCount++;
 #if NAVMESH_PROFILING
                     totalInternalTicks += result.TicksFindTriangle + result.TicksExtractMin +
-                        result.TicksGetTriangle + result.TicksMoveCost +
-                        result.TicksHeuristic + result.TicksHeapOps;
+                        result.TicksMoveCost + result.TicksHeuristic + result.TicksHeapOps;
 #endif
                 }
             }

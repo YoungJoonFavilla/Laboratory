@@ -45,6 +45,10 @@ namespace NavMesh2D.Pathfinding
         // _neighborEntryEdge[triIndex * 3 + edge] = 이웃이 나를 참조하는 에지 인덱스
         private int[] _neighborEntryEdge;
 
+        // Neighbors 캐시 (flat 배열로 switch 분기 제거)
+        // _neighbors[triIndex * 3 + edge] = 이웃 삼각형 인덱스 (-1이면 없음)
+        private int[] _neighbors;
+
         /// <summary>
         /// 삼각형 목록
         /// </summary>
@@ -274,17 +278,21 @@ namespace NavMesh2D.Pathfinding
                 _edgePairDistances[triIndex * 3 + 2] = Vector2Fixed.Distance(ec1, ec2).m_rawValue;
             }
 
-            // Neighbor Entry Edge 계산
+            // Neighbors + Neighbor Entry Edge 계산
+            _neighbors = new int[size];
             _neighborEntryEdge = new int[size];
             for (int triIndex = 0; triIndex < _triangles.Count; triIndex++)
             {
                 var tri = _triangles[triIndex];
                 for (int edge = 0; edge < 3; edge++)
                 {
+                    int idx = triIndex * 3 + edge;
                     int neighbor = tri.GetNeighbor(edge);
+                    _neighbors[idx] = neighbor;
+
                     if (neighbor < 0)
                     {
-                        _neighborEntryEdge[triIndex * 3 + edge] = -1;
+                        _neighborEntryEdge[idx] = -1;
                         continue;
                     }
 
@@ -299,7 +307,7 @@ namespace NavMesh2D.Pathfinding
                             break;
                         }
                     }
-                    _neighborEntryEdge[triIndex * 3 + edge] = entryEdge;
+                    _neighborEntryEdge[idx] = entryEdge;
                 }
             }
         }
@@ -328,6 +336,15 @@ namespace NavMesh2D.Pathfinding
         public int GetNeighborEntryEdge(int triIndex, int edge)
         {
             return _neighborEntryEdge[triIndex * 3 + edge];
+        }
+
+        /// <summary>
+        /// 이웃 삼각형 인덱스 반환 (flat 배열 직접 접근, switch 분기 없음)
+        /// </summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        public int GetNeighborDirect(int triIndex, int edge)
+        {
+            return _neighbors[triIndex * 3 + edge];
         }
 
         private int GetCellX(Fixed64 x)

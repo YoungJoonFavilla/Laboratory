@@ -29,7 +29,6 @@ namespace NavMesh2D.Pathfinding
 #if NAVMESH_PROFILING
             // 디버그용 타이밍 (ticks)
             public long TicksExtractMin;
-            public long TicksGetTriangle;
             public long TicksMoveCost;
             public long TicksHeuristic;
             public long TicksHeapOps;
@@ -84,7 +83,7 @@ namespace NavMesh2D.Pathfinding
             };
 
 #if NAVMESH_PROFILING
-            long ticksExtractMin = 0, ticksGetTriangle = 0, ticksMoveCost = 0;
+            long ticksExtractMin = 0, ticksMoveCost = 0;
             long ticksHeuristic = 0, ticksHeapOps = 0, ticksFindTriangle = 0;
             long t0, t1;
             t0 = Stopwatch.GetTimestamp();
@@ -160,7 +159,6 @@ namespace NavMesh2D.Pathfinding
                     result.ExploredCount = exploredCount;
 #if NAVMESH_PROFILING
                     result.TicksExtractMin = ticksExtractMin;
-                    result.TicksGetTriangle = ticksGetTriangle;
                     result.TicksMoveCost = ticksMoveCost;
                     result.TicksHeuristic = ticksHeuristic;
                     result.TicksHeapOps = ticksHeapOps;
@@ -174,18 +172,10 @@ namespace NavMesh2D.Pathfinding
                 _inClosedSet[currentTri] = _generation;
                 int entryEdge = _lastEntryEdge[currentTri];
 
-#if NAVMESH_PROFILING
-                t0 = Stopwatch.GetTimestamp();
-#endif
-                var triangle = _navMesh.GetTriangle(currentTri);
-#if NAVMESH_PROFILING
-                t1 = Stopwatch.GetTimestamp();
-                ticksGetTriangle += (t1 - t0);
-#endif
-
                 for (int exitEdge = 0; exitEdge < 3; exitEdge++)
                 {
-                    int neighbor = triangle.GetNeighbor(exitEdge);
+                    // flat 배열 직접 접근 (GetTriangle + switch 분기 제거)
+                    int neighbor = _navMesh.GetNeighborDirect(currentTri, exitEdge);
                     if (neighbor < 0 || _inClosedSet[neighbor] == _generation)
                         continue;
 
@@ -254,7 +244,6 @@ namespace NavMesh2D.Pathfinding
             result.ExploredCount = exploredCount;
 #if NAVMESH_PROFILING
             result.TicksExtractMin = ticksExtractMin;
-            result.TicksGetTriangle = ticksGetTriangle;
             result.TicksMoveCost = ticksMoveCost;
             result.TicksHeuristic = ticksHeuristic;
             result.TicksHeapOps = ticksHeapOps;
