@@ -59,14 +59,27 @@ namespace NavMesh2D.Pathfinding
         public TriangleAStar(NavMesh2DData navMesh)
         {
             _navMesh = navMesh;
+            int triCount = navMesh.TriangleCount;
+
+            // 배열 초기화
+            _gScore = new Fixed64[triCount];
+            _cameFrom = new int[triCount];
+            _lastEdgeCenter = new Vector2Fixed[triCount];
+            _nodeGeneration = new int[triCount];
+            _inClosedSet = new int[triCount];
         }
 
         // 재사용 컬렉션
         private readonly IndexedMinHeap _openSet = new IndexedMinHeap();
-        private readonly HashSet<int> _closedSet = new HashSet<int>();
-        private readonly Dictionary<int, Fixed64> _gScore = new Dictionary<int, Fixed64>();
-        private readonly Dictionary<int, int> _cameFrom = new Dictionary<int, int>();
         private readonly List<int> _pathBuffer = new List<int>();
+
+        // Generation 기반 배열 (Dictionary 대체)
+        private int _generation = 0;
+        private Fixed64[] _gScore;
+        private int[] _cameFrom;
+        private Vector2Fixed[] _lastEdgeCenter;
+        private int[] _nodeGeneration;  // 노드가 마지막으로 방문된 generation
+        private int[] _inClosedSet;     // closedSet에 추가된 generation
 
         /// <summary>
         /// A* 경로 찾기 수행
@@ -107,21 +120,20 @@ namespace NavMesh2D.Pathfinding
                 return result;
             }
 
-            // 컬렉션 초기화
+            // Generation 증가 (모든 이전 데이터 무효화)
+            _generation++;
             _openSet.Clear();
-            _closedSet.Clear();
-            _gScore.Clear();
-            _cameFrom.Clear();
 
             // 2. A* 알고리즘 실행
             // 시작점에서 끝점까지의 휴리스틱 (실제 점 사용)
             Fixed64 hStart = Vector2Fixed.Distance(start, end);
             _openSet.Insert(startTri, Fixed64.Zero, hStart);
-            _gScore[startTri] = Fixed64.Zero;
 
-            // 이전에 통과한 에지 중심점 저장 (실제 시작점부터 계산하기 위해)
-            var _lastEdgeCenter = new Dictionary<int, Vector2Fixed>();
-            _lastEdgeCenter[startTri] = start; // 시작 삼각형은 실제 시작점에서 출발
+            // 시작 노드 초기화
+            _gScore[startTri] = Fixed64.Zero;
+            _lastEdgeCenter[startTri] = start;
+            _nodeGeneration[startTri] = _generation;
+            _cameFrom[startTri] = startTri; // 자기 자신을 가리켜서 시작점임을 표시
 
             while (_openSet.Count > 0)
             {
@@ -133,10 +145,12 @@ namespace NavMesh2D.Pathfinding
                 {
                     result.Success = true;
                     ReconstructPath(result, currentTri);
+                    CheckGenerationOverflow();
                     return result;
                 }
 
-                _closedSet.Add(currentTri);
+                // ClosedSet에 추가 (generation 기반)
+                _inClosedSet[currentTri] = _generation;
 
                 // 현재 위치 (시작점이면 실제 시작점, 아니면 진입한 에지 중심점)
                 Vector2Fixed currentPos = _lastEdgeCenter[currentTri];
@@ -146,7 +160,7 @@ namespace NavMesh2D.Pathfinding
                 for (int edge = 0; edge < 3; edge++)
                 {
                     int neighbor = triangle.GetNeighbor(edge);
-                    if (neighbor < 0 || _closedSet.Contains(neighbor))
+                    if (neighbor < 0 || _inClosedSet[neighbor] == _generation)
                         continue;
 
                     // 에지 중심점으로 이동 비용 계산 (실제 현재 위치에서)
@@ -161,12 +175,14 @@ namespace NavMesh2D.Pathfinding
                         tentativeG += finalLeg;
                     }
 
-                    // 더 좋은 경로인지 확인
-                    if (!_gScore.TryGetValue(neighbor, out Fixed64 existingG) || tentativeG < existingG)
+                    // 이번 generation에서 처음 방문하거나, 더 좋은 경로인 경우
+                    bool isFirstVisit = _nodeGeneration[neighbor] != _generation;
+                    if (isFirstVisit || tentativeG < _gScore[neighbor])
                     {
                         _gScore[neighbor] = tentativeG;
                         _cameFrom[neighbor] = currentTri;
-                        _lastEdgeCenter[neighbor] = edgeCenter; // 이 삼각형에 진입한 에지 중심점 저장
+                        _lastEdgeCenter[neighbor] = edgeCenter;
+                        _nodeGeneration[neighbor] = _generation;
 
                         // 휴리스틱: 에지 중심점에서 실제 끝점까지 (도착 삼각형이면 이미 G에 포함했으므로 0)
                         Fixed64 h = (neighbor == endTri) ? Fixed64.Zero : Vector2Fixed.Distance(edgeCenter, end);
@@ -185,7 +201,21 @@ namespace NavMesh2D.Pathfinding
             }
 
             // 경로를 찾지 못함
+            CheckGenerationOverflow();
             return result;
+        }
+
+        /// <summary>
+        /// Generation 오버플로우 체크 및 리셋
+        /// </summary>
+        private void CheckGenerationOverflow()
+        {
+            if (_generation == int.MaxValue)
+            {
+                _generation = 0;
+                System.Array.Clear(_nodeGeneration, 0, _nodeGeneration.Length);
+                System.Array.Clear(_inClosedSet, 0, _inClosedSet.Length);
+            }
         }
 
         /// <summary>
@@ -196,7 +226,8 @@ namespace NavMesh2D.Pathfinding
             _pathBuffer.Clear();
             int current = endTri;
 
-            while (_cameFrom.ContainsKey(current))
+            // _cameFrom이 유효한 동안 역추적 (시작 노드는 자기 자신을 가리킴)
+            while (_cameFrom[current] != current)
             {
                 _pathBuffer.Add(current);
                 current = _cameFrom[current];
