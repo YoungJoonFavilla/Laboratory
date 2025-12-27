@@ -17,6 +17,7 @@ namespace NavMesh2D.Editor
         private SerializedProperty _boundaryMaxProp;
         private SerializedProperty _maxTriangleCountProp;
         private SerializedProperty _obstaclesProp;
+        private SerializedProperty _walkablesProp;
         private SerializedProperty _visualizerProp;
         private SerializedProperty _navMeshAssetProp;
         private SerializedProperty _autoRebuildProp;
@@ -29,7 +30,9 @@ namespace NavMesh2D.Editor
         private SerializedProperty _agentMoveSpeedProp;
 
         private int _selectedObstacleIndex = -1;
+        private int _selectedWalkableIndex = -1;
         private int _selectedVertexIndex = -1;
+        private bool _isEditingWalkable = false;  // true: 워커블 편집 중, false: 장애물 편집 중
 
         private const float HANDLE_SIZE = 0.3f;
         private const float HIT_DISTANCE = 20f;
@@ -66,6 +69,7 @@ namespace NavMesh2D.Editor
             _boundaryMaxProp = serializedObject.FindProperty("_boundaryMax");
             _maxTriangleCountProp = serializedObject.FindProperty("_maxTriangleCount");
             _obstaclesProp = serializedObject.FindProperty("_obstacles");
+            _walkablesProp = serializedObject.FindProperty("_walkables");
             _visualizerProp = serializedObject.FindProperty("_visualizer");
             _navMeshAssetProp = serializedObject.FindProperty("_navMeshAsset");
             _autoRebuildProp = serializedObject.FindProperty("_autoRebuildOnChange");
@@ -213,6 +217,13 @@ namespace NavMesh2D.Editor
             }
             EditorGUILayout.EndHorizontal();
 
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("Subdivide Edges"))
+            {
+                SubdivideSelectedPolygonEdges();
+            }
+            EditorGUILayout.EndHorizontal();
+
             EditorGUILayout.Space();
 
             // Pathfinding Test
@@ -236,6 +247,50 @@ namespace NavMesh2D.Editor
 
             // Obstacle List
             DrawObstacleList();
+
+            EditorGUILayout.Space();
+
+            // Walkable Polygons Header
+            EditorGUILayout.LabelField("Walkable Polygons (노란색)", EditorStyles.boldLabel);
+
+            // Walkable buttons
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("+ Rectangle"))
+            {
+                _demo.AddRectangleWalkable(GetSceneViewCenter());
+                SelectNewWalkable();
+            }
+            if (GUILayout.Button("+ Triangle"))
+            {
+                _demo.AddTriangleWalkable(GetSceneViewCenter());
+                SelectNewWalkable();
+            }
+            if (GUILayout.Button("+ Circle"))
+            {
+                _demo.AddCircleWalkable(GetSceneViewCenter());
+                SelectNewWalkable();
+            }
+            if (GUILayout.Button("+ Polygon"))
+            {
+                _demo.AddPolygonWalkable(GetSceneViewCenter());
+                SelectNewWalkable();
+            }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("Clear All Walkables"))
+            {
+                _demo.ClearAllWalkables();
+                _selectedWalkableIndex = -1;
+                InvalidateCache();
+                serializedObject.Update();
+            }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.Space();
+
+            // Walkable List
+            DrawWalkableList();
 
             EditorGUILayout.Space();
 
@@ -268,6 +323,8 @@ namespace NavMesh2D.Editor
                 if (EditorGUI.EndChangeCheck())
                 {
                     _selectedObstacleIndex = newSelected ? i : -1;
+                    _selectedWalkableIndex = -1;
+                    _isEditingWalkable = false;
                     _selectedVertexIndex = -1;
                     InvalidateCache();
                     SceneView.RepaintAll();
@@ -283,6 +340,8 @@ namespace NavMesh2D.Editor
                 if (GUILayout.Button("Edit", GUILayout.Width(40)))
                 {
                     _selectedObstacleIndex = i;
+                    _selectedWalkableIndex = -1;
+                    _isEditingWalkable = false;
                     _selectedVertexIndex = -1;
                     InvalidateCache();
                     SceneView.RepaintAll();
@@ -295,6 +354,95 @@ namespace NavMesh2D.Editor
                     if (_selectedObstacleIndex >= _obstaclesProp.arraySize)
                     {
                         _selectedObstacleIndex = -1;
+                    }
+                    InvalidateCache();
+                    break;
+                }
+
+                EditorGUILayout.EndHorizontal();
+
+                // Show vertices if selected
+                if (isSelected)
+                {
+                    EditorGUI.indentLevel++;
+                    for (int v = 0; v < verticesProp.arraySize; v++)
+                    {
+                        EditorGUILayout.BeginHorizontal();
+                        EditorGUILayout.LabelField($"  [{v}]", GUILayout.Width(40));
+                        EditorGUILayout.PropertyField(verticesProp.GetArrayElementAtIndex(v), GUIContent.none);
+                        EditorGUILayout.EndHorizontal();
+                    }
+                    EditorGUI.indentLevel--;
+                }
+            }
+        }
+
+        private void DrawWalkableList()
+        {
+            if (_walkablesProp == null)
+                return;
+
+            for (int i = 0; i < _walkablesProp.arraySize; i++)
+            {
+                var walkable = _walkablesProp.GetArrayElementAtIndex(i);
+                var nameProp = walkable.FindPropertyRelative("name");
+                var verticesProp = walkable.FindPropertyRelative("vertices");
+
+                bool isSelected = _isEditingWalkable && _selectedWalkableIndex == i;
+
+                EditorGUILayout.BeginHorizontal();
+
+                // Selection toggle (노란색 배경으로 구분)
+                var oldColor = GUI.backgroundColor;
+                GUI.backgroundColor = isSelected ? Color.yellow : oldColor;
+
+                EditorGUI.BeginChangeCheck();
+                bool newSelected = GUILayout.Toggle(isSelected, "", GUILayout.Width(20));
+                if (EditorGUI.EndChangeCheck())
+                {
+                    if (newSelected)
+                    {
+                        _selectedWalkableIndex = i;
+                        _isEditingWalkable = true;
+                        _selectedObstacleIndex = -1;  // 장애물 선택 해제
+                    }
+                    else
+                    {
+                        _selectedWalkableIndex = -1;
+                        _isEditingWalkable = false;
+                    }
+                    _selectedVertexIndex = -1;
+                    InvalidateCache();
+                    SceneView.RepaintAll();
+                }
+
+                GUI.backgroundColor = oldColor;
+
+                // Name
+                EditorGUILayout.PropertyField(nameProp, GUIContent.none, GUILayout.Width(100));
+
+                // Vertex count
+                EditorGUILayout.LabelField($"{verticesProp.arraySize} verts", GUILayout.Width(60));
+
+                // Edit button
+                if (GUILayout.Button("Edit", GUILayout.Width(40)))
+                {
+                    _selectedWalkableIndex = i;
+                    _isEditingWalkable = true;
+                    _selectedObstacleIndex = -1;
+                    _selectedVertexIndex = -1;
+                    InvalidateCache();
+                    SceneView.RepaintAll();
+                }
+
+                // Delete button
+                if (GUILayout.Button("X", GUILayout.Width(25)))
+                {
+                    _walkablesProp.DeleteArrayElementAtIndex(i);
+                    if (_selectedWalkableIndex >= _walkablesProp.arraySize)
+                    {
+                        _selectedWalkableIndex = -1;
+                        _isEditingWalkable = false;
                     }
                     InvalidateCache();
                     break;
@@ -344,6 +492,7 @@ namespace NavMesh2D.Editor
             {
                 if (shouldProfile) _profileSw.Restart();
                 DrawAllObstaclesOptimized();
+                DrawAllWalkablesOptimized();  // 워커블 그리기 추가
                 if (shouldProfile)
                 {
                     _profileSw.Stop();
@@ -353,7 +502,7 @@ namespace NavMesh2D.Editor
                     // 장애물 수 진단 (처음 한번만)
                     if (_frameCount == 0)
                     {
-                        Debug.Log($"[Diagnostic] Obstacle count: {_obstaclesProp.arraySize}");
+                        Debug.Log($"[Diagnostic] Obstacle count: {_obstaclesProp.arraySize}, Walkable count: {(_walkablesProp != null ? _walkablesProp.arraySize : 0)}");
                     }
                 }
             }
@@ -364,8 +513,11 @@ namespace NavMesh2D.Editor
                 HandleMouseEvents(e);
             }
 
-            // 핸들은 선택된 장애물이 있을 때만
-            if (_selectedObstacleIndex >= 0 && _selectedObstacleIndex < _obstaclesProp.arraySize)
+            // 핸들은 선택된 장애물 또는 워커블이 있을 때
+            bool hasSelectedObstacle = !_isEditingWalkable && _selectedObstacleIndex >= 0 && _selectedObstacleIndex < _obstaclesProp.arraySize;
+            bool hasSelectedWalkable = _isEditingWalkable && _selectedWalkableIndex >= 0 && _walkablesProp != null && _selectedWalkableIndex < _walkablesProp.arraySize;
+
+            if (hasSelectedObstacle || hasSelectedWalkable)
             {
                 if (shouldProfile) _profileSw.Restart();
                 serializedObject.Update();
@@ -376,14 +528,30 @@ namespace NavMesh2D.Editor
                 }
 
                 if (shouldProfile) _profileSw.Restart();
-                DrawSelectedObstacleHandles();
+
+                if (hasSelectedObstacle)
+                {
+                    DrawSelectedObstacleHandles();
+                    if (shouldProfile)
+                    {
+                        var obstacle = _obstaclesProp.GetArrayElementAtIndex(_selectedObstacleIndex);
+                        vertexCount = obstacle.FindPropertyRelative("vertices").arraySize;
+                    }
+                }
+                else if (hasSelectedWalkable)
+                {
+                    DrawSelectedWalkableHandles();
+                    if (shouldProfile)
+                    {
+                        var walkable = _walkablesProp.GetArrayElementAtIndex(_selectedWalkableIndex);
+                        vertexCount = walkable.FindPropertyRelative("vertices").arraySize;
+                    }
+                }
+
                 if (shouldProfile)
                 {
                     _profileSw.Stop();
                     t3 = _profileSw.ElapsedMilliseconds;
-                    // 선택된 장애물 정점 수
-                    var obstacle = _obstaclesProp.GetArrayElementAtIndex(_selectedObstacleIndex);
-                    vertexCount = obstacle.FindPropertyRelative("vertices").arraySize;
                 }
 
                 if (GUI.changed)
@@ -427,29 +595,59 @@ namespace NavMesh2D.Editor
 
         private void HandleMouseEvents(Event e)
         {
-            if (_selectedObstacleIndex < 0 || _selectedObstacleIndex >= _obstaclesProp.arraySize)
-                return;
-
-            // Right click on vertex - show context menu
-            if (e.type == EventType.MouseDown && e.button == 1)
+            // 장애물 편집 중
+            if (!_isEditingWalkable && _selectedObstacleIndex >= 0 && _selectedObstacleIndex < _obstaclesProp.arraySize)
             {
-                int clickedVertex = GetClickedVertexIndex(e.mousePosition);
-                if (clickedVertex >= 0)
+                // Right click on vertex - show context menu
+                if (e.type == EventType.MouseDown && e.button == 1)
                 {
-                    _selectedVertexIndex = clickedVertex;
-                    ShowVertexContextMenu(clickedVertex);
-                    e.Use();
+                    int clickedVertex = GetClickedVertexIndex(e.mousePosition, false);
+                    if (clickedVertex >= 0)
+                    {
+                        _selectedVertexIndex = clickedVertex;
+                        ShowVertexContextMenu(clickedVertex, false);
+                        e.Use();
+                    }
+                }
+            }
+            // 워커블 편집 중
+            else if (_isEditingWalkable && _walkablesProp != null && _selectedWalkableIndex >= 0 && _selectedWalkableIndex < _walkablesProp.arraySize)
+            {
+                // Right click on vertex - show context menu
+                if (e.type == EventType.MouseDown && e.button == 1)
+                {
+                    int clickedVertex = GetClickedVertexIndex(e.mousePosition, true);
+                    if (clickedVertex >= 0)
+                    {
+                        _selectedVertexIndex = clickedVertex;
+                        ShowVertexContextMenu(clickedVertex, true);
+                        e.Use();
+                    }
                 }
             }
         }
 
-        private int GetClickedVertexIndex(Vector2 mousePos)
+        private int GetClickedVertexIndex(Vector2 mousePos, bool isWalkable)
         {
-            if (_selectedObstacleIndex < 0 || _selectedObstacleIndex >= _obstaclesProp.arraySize)
-                return -1;
+            SerializedProperty targetProp;
+            int targetIndex;
 
-            var obstacle = _obstaclesProp.GetArrayElementAtIndex(_selectedObstacleIndex);
-            var verticesProp = obstacle.FindPropertyRelative("vertices");
+            if (isWalkable)
+            {
+                if (_walkablesProp == null || _selectedWalkableIndex < 0 || _selectedWalkableIndex >= _walkablesProp.arraySize)
+                    return -1;
+                targetProp = _walkablesProp.GetArrayElementAtIndex(_selectedWalkableIndex);
+                targetIndex = _selectedWalkableIndex;
+            }
+            else
+            {
+                if (_selectedObstacleIndex < 0 || _selectedObstacleIndex >= _obstaclesProp.arraySize)
+                    return -1;
+                targetProp = _obstaclesProp.GetArrayElementAtIndex(_selectedObstacleIndex);
+                targetIndex = _selectedObstacleIndex;
+            }
+
+            var verticesProp = targetProp.FindPropertyRelative("vertices");
 
             float closestDistance = float.MaxValue;
             int closestIndex = -1;
@@ -471,24 +669,33 @@ namespace NavMesh2D.Editor
             return closestIndex;
         }
 
-        private void ShowVertexContextMenu(int vertexIndex)
+        private void ShowVertexContextMenu(int vertexIndex, bool isWalkable)
         {
-            var obstacle = _obstaclesProp.GetArrayElementAtIndex(_selectedObstacleIndex);
-            var verticesProp = obstacle.FindPropertyRelative("vertices");
+            SerializedProperty targetProp;
+            if (isWalkable)
+            {
+                targetProp = _walkablesProp.GetArrayElementAtIndex(_selectedWalkableIndex);
+            }
+            else
+            {
+                targetProp = _obstaclesProp.GetArrayElementAtIndex(_selectedObstacleIndex);
+            }
+            var verticesProp = targetProp.FindPropertyRelative("vertices");
 
             GenericMenu menu = new GenericMenu();
 
-            menu.AddItem(new GUIContent($"Vertex [{vertexIndex}]"), false, null);
+            string typeName = isWalkable ? "Walkable" : "Obstacle";
+            menu.AddItem(new GUIContent($"{typeName} Vertex [{vertexIndex}]"), false, null);
             menu.AddSeparator("");
 
             menu.AddItem(new GUIContent("Add Point After"), false, () =>
             {
-                AddVertexAfter(vertexIndex);
+                AddVertexAfter(vertexIndex, isWalkable);
             });
 
             menu.AddItem(new GUIContent("Add Point Before"), false, () =>
             {
-                AddVertexBefore(vertexIndex);
+                AddVertexBefore(vertexIndex, isWalkable);
             });
 
             menu.AddSeparator("");
@@ -497,7 +704,7 @@ namespace NavMesh2D.Editor
             {
                 menu.AddItem(new GUIContent("Remove This Point"), false, () =>
                 {
-                    RemoveVertex(vertexIndex);
+                    RemoveVertex(vertexIndex, isWalkable);
                 });
             }
             else
@@ -509,19 +716,25 @@ namespace NavMesh2D.Editor
 
             menu.AddItem(new GUIContent("Reset to Origin"), false, () =>
             {
-                ResetVertexPosition(vertexIndex);
+                ResetVertexPosition(vertexIndex, isWalkable);
             });
 
             menu.ShowAsContext();
         }
 
-        private void AddVertexAfter(int index)
+        private void AddVertexAfter(int index, bool isWalkable)
         {
-            Undo.RecordObject(_demo, "Add Vertex");
+            string undoName = isWalkable ? "Add Walkable Vertex" : "Add Obstacle Vertex";
+            Undo.RecordObject(_demo, undoName);
             serializedObject.Update();
 
-            var obstacle = _obstaclesProp.GetArrayElementAtIndex(_selectedObstacleIndex);
-            var verticesProp = obstacle.FindPropertyRelative("vertices");
+            SerializedProperty targetProp;
+            if (isWalkable)
+                targetProp = _walkablesProp.GetArrayElementAtIndex(_selectedWalkableIndex);
+            else
+                targetProp = _obstaclesProp.GetArrayElementAtIndex(_selectedObstacleIndex);
+
+            var verticesProp = targetProp.FindPropertyRelative("vertices");
 
             int nextIndex = (index + 1) % verticesProp.arraySize;
             Vector2 current = verticesProp.GetArrayElementAtIndex(index).vector2Value;
@@ -537,13 +750,19 @@ namespace NavMesh2D.Editor
             SceneView.RepaintAll();
         }
 
-        private void AddVertexBefore(int index)
+        private void AddVertexBefore(int index, bool isWalkable)
         {
-            Undo.RecordObject(_demo, "Add Vertex");
+            string undoName = isWalkable ? "Add Walkable Vertex" : "Add Obstacle Vertex";
+            Undo.RecordObject(_demo, undoName);
             serializedObject.Update();
 
-            var obstacle = _obstaclesProp.GetArrayElementAtIndex(_selectedObstacleIndex);
-            var verticesProp = obstacle.FindPropertyRelative("vertices");
+            SerializedProperty targetProp;
+            if (isWalkable)
+                targetProp = _walkablesProp.GetArrayElementAtIndex(_selectedWalkableIndex);
+            else
+                targetProp = _obstaclesProp.GetArrayElementAtIndex(_selectedObstacleIndex);
+
+            var verticesProp = targetProp.FindPropertyRelative("vertices");
 
             int prevIndex = (index - 1 + verticesProp.arraySize) % verticesProp.arraySize;
             Vector2 current = verticesProp.GetArrayElementAtIndex(index).vector2Value;
@@ -559,13 +778,19 @@ namespace NavMesh2D.Editor
             SceneView.RepaintAll();
         }
 
-        private void RemoveVertex(int index)
+        private void RemoveVertex(int index, bool isWalkable)
         {
-            Undo.RecordObject(_demo, "Remove Vertex");
+            string undoName = isWalkable ? "Remove Walkable Vertex" : "Remove Obstacle Vertex";
+            Undo.RecordObject(_demo, undoName);
             serializedObject.Update();
 
-            var obstacle = _obstaclesProp.GetArrayElementAtIndex(_selectedObstacleIndex);
-            var verticesProp = obstacle.FindPropertyRelative("vertices");
+            SerializedProperty targetProp;
+            if (isWalkable)
+                targetProp = _walkablesProp.GetArrayElementAtIndex(_selectedWalkableIndex);
+            else
+                targetProp = _obstaclesProp.GetArrayElementAtIndex(_selectedObstacleIndex);
+
+            var verticesProp = targetProp.FindPropertyRelative("vertices");
 
             if (verticesProp.arraySize <= 3)
             {
@@ -582,13 +807,19 @@ namespace NavMesh2D.Editor
             SceneView.RepaintAll();
         }
 
-        private void ResetVertexPosition(int index)
+        private void ResetVertexPosition(int index, bool isWalkable)
         {
-            Undo.RecordObject(_demo, "Reset Vertex");
+            string undoName = isWalkable ? "Reset Walkable Vertex" : "Reset Obstacle Vertex";
+            Undo.RecordObject(_demo, undoName);
             serializedObject.Update();
 
-            var obstacle = _obstaclesProp.GetArrayElementAtIndex(_selectedObstacleIndex);
-            var verticesProp = obstacle.FindPropertyRelative("vertices");
+            SerializedProperty targetProp;
+            if (isWalkable)
+                targetProp = _walkablesProp.GetArrayElementAtIndex(_selectedWalkableIndex);
+            else
+                targetProp = _obstaclesProp.GetArrayElementAtIndex(_selectedObstacleIndex);
+
+            var verticesProp = targetProp.FindPropertyRelative("vertices");
 
             verticesProp.GetArrayElementAtIndex(index).vector2Value = Vector2.zero;
 
@@ -608,6 +839,10 @@ namespace NavMesh2D.Editor
         private List<Vector2[]> _allObstaclesCache = new List<Vector2[]>();
         private int _allObstaclesCacheVersion = -1;
         private bool _allObstaclesCacheDirty = true;
+
+        // 모든 워커블 캐싱
+        private List<Vector2[]> _allWalkablesCache = new List<Vector2[]>();
+        private bool _allWalkablesCacheDirty = true;
 
         /// <summary>
         /// 모든 장애물 캐시 갱신
@@ -642,6 +877,45 @@ namespace NavMesh2D.Editor
             }
 
             _allObstaclesCacheDirty = false;
+        }
+
+        /// <summary>
+        /// 모든 워커블 캐시 갱신
+        /// </summary>
+        private void RefreshAllWalkablesCache()
+        {
+            if (_walkablesProp == null)
+            {
+                _allWalkablesCache.Clear();
+                _allWalkablesCacheDirty = false;
+                return;
+            }
+
+            int count = _walkablesProp.arraySize;
+
+            while (_allWalkablesCache.Count < count)
+                _allWalkablesCache.Add(null);
+            while (_allWalkablesCache.Count > count)
+                _allWalkablesCache.RemoveAt(_allWalkablesCache.Count - 1);
+
+            for (int i = 0; i < count; i++)
+            {
+                var walkable = _walkablesProp.GetArrayElementAtIndex(i);
+                var verticesProp = walkable.FindPropertyRelative("vertices");
+                int vertCount = verticesProp.arraySize;
+
+                if (_allWalkablesCache[i] == null || _allWalkablesCache[i].Length != vertCount)
+                {
+                    _allWalkablesCache[i] = new Vector2[vertCount];
+                }
+
+                for (int v = 0; v < vertCount; v++)
+                {
+                    _allWalkablesCache[i][v] = verticesProp.GetArrayElementAtIndex(v).vector2Value;
+                }
+            }
+
+            _allWalkablesCacheDirty = false;
         }
 
         /// <summary>
@@ -709,6 +983,200 @@ namespace NavMesh2D.Editor
 
             sw.Stop();
             _lastDrawLinesMs = sw.ElapsedMilliseconds;
+        }
+
+        /// <summary>
+        /// 최적화된 워커블 그리기 (노란색, 배치 드로잉)
+        /// </summary>
+        private void DrawAllWalkablesOptimized()
+        {
+            if (_walkablesProp == null)
+                return;
+
+            // 캐시 갱신
+            if (_allWalkablesCacheDirty)
+            {
+                RefreshAllWalkablesCache();
+            }
+
+            // 캐시된 데이터로 라인 수집
+            _linePointsCache.Clear();
+            int walkableCount = _allWalkablesCache.Count;
+
+            for (int i = 0; i < walkableCount; i++)
+            {
+                // 선택된 워커블은 별도로 그림
+                if (_isEditingWalkable && i == _selectedWalkableIndex)
+                    continue;
+
+                var vertices = _allWalkablesCache[i];
+                if (vertices == null || vertices.Length < 3)
+                    continue;
+
+                int count = vertices.Length;
+                for (int v = 0; v < count; v++)
+                {
+                    int next = (v + 1) % count;
+                    Vector2 a = vertices[v];
+                    Vector2 b = vertices[next];
+                    _linePointsCache.Add(new Vector3(a.x, a.y, 0));
+                    _linePointsCache.Add(new Vector3(b.x, b.y, 0));
+                }
+            }
+
+            // 비선택 워커블 일괄 그리기 (진한 노란색)
+            if (_linePointsCache.Count > 0)
+            {
+                Handles.color = new Color(0.9f, 0.8f, 0.2f, 0.8f);
+                DrawLinesWithCache();
+            }
+
+            // 선택된 워커블 그리기
+            if (_isEditingWalkable && _selectedWalkableIndex >= 0 && _selectedWalkableIndex < walkableCount)
+            {
+                DrawSelectedWalkable();
+            }
+        }
+
+        /// <summary>
+        /// 선택된 워커블만 그리기 (정점 표시 포함)
+        /// </summary>
+        private void DrawSelectedWalkable()
+        {
+            if (_selectedWalkableIndex < 0 || _selectedWalkableIndex >= _allWalkablesCache.Count)
+                return;
+
+            var vertices = _allWalkablesCache[_selectedWalkableIndex];
+            if (vertices == null || vertices.Length < 3)
+                return;
+
+            int count = vertices.Length;
+
+            // 선택된 워커블 에지 그리기
+            _linePointsCache.Clear();
+            for (int i = 0; i < count; i++)
+            {
+                int next = (i + 1) % count;
+                Vector2 a = vertices[i];
+                Vector2 b = vertices[next];
+                _linePointsCache.Add(new Vector3(a.x, a.y, 0));
+                _linePointsCache.Add(new Vector3(b.x, b.y, 0));
+            }
+
+            Handles.color = Color.white;  // 선택된 워커블은 흰색
+            DrawLinesWithCache();
+
+            // 정점 그리기 (Repaint 이벤트에서만)
+            if (Event.current.type == EventType.Repaint)
+            {
+                EnsureVertexLabelCache(count);
+
+                for (int i = 0; i < count; i++)
+                {
+                    Vector3 worldPos = new Vector3(vertices[i].x, vertices[i].y, 0);
+
+                    bool isVertexSelected = i == _selectedVertexIndex;
+                    Handles.color = isVertexSelected ? Color.white : Color.yellow;
+
+                    float size = HandleUtility.GetHandleSize(worldPos) * HANDLE_SIZE;
+                    Handles.RectangleHandleCap(0, worldPos, Quaternion.identity, size, EventType.Repaint);
+
+                    Handles.Label(worldPos + Vector3.up * size * 2f, _vertexLabelCache[i]);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 선택된 워커블 핸들 그리기
+        /// </summary>
+        private void DrawSelectedWalkableHandles()
+        {
+            if (_selectedWalkableIndex < 0 || _selectedWalkableIndex >= _allWalkablesCache.Count)
+                return;
+
+            var vertices = _allWalkablesCache[_selectedWalkableIndex];
+            if (vertices == null || vertices.Length < 3)
+                return;
+
+            int vertCount = vertices.Length;
+
+            // 중심점 계산
+            Vector2 center = Vector2.zero;
+            for (int i = 0; i < vertCount; i++)
+            {
+                center += vertices[i];
+            }
+            center /= vertCount;
+
+            bool anyChange = false;
+
+            // Draw center move handle
+            EditorGUI.BeginChangeCheck();
+            Vector3 newCenter = Handles.PositionHandle(new Vector3(center.x, center.y, 0), Quaternion.identity);
+            if (EditorGUI.EndChangeCheck())
+            {
+                if (!_isDragging)
+                {
+                    Undo.RecordObject(_demo, "Move Walkable");
+                    _isDragging = true;
+                }
+                Vector2 delta = new Vector2(newCenter.x, newCenter.y) - center;
+
+                for (int i = 0; i < vertCount; i++)
+                {
+                    vertices[i] += delta;
+                }
+                anyChange = true;
+            }
+
+            // Draw vertex move handles
+            for (int i = 0; i < vertCount; i++)
+            {
+                Vector2 vertex = vertices[i];
+                Vector3 worldPos = new Vector3(vertex.x, vertex.y, 0);
+
+                float size = HandleUtility.GetHandleSize(worldPos) * HANDLE_SIZE;
+
+                EditorGUI.BeginChangeCheck();
+                Handles.color = (_selectedVertexIndex == i) ? Color.white : Color.yellow;
+                Vector3 newPos = Handles.FreeMoveHandle(
+                    worldPos,
+                    size,
+                    Vector3.zero,
+                    Handles.RectangleHandleCap
+                );
+
+                if (EditorGUI.EndChangeCheck())
+                {
+                    if (!_isDragging)
+                    {
+                        Undo.RecordObject(_demo, "Move Walkable Vertex");
+                        _isDragging = true;
+                    }
+                    vertices[i] = new Vector2(newPos.x, newPos.y);
+                    _selectedVertexIndex = i;
+                    anyChange = true;
+                }
+            }
+
+            // 변경 사항을 SerializedProperty에 저장
+            if (anyChange)
+            {
+                var walkable = _walkablesProp.GetArrayElementAtIndex(_selectedWalkableIndex);
+                var verticesProp = walkable.FindPropertyRelative("vertices");
+
+                for (int i = 0; i < vertCount; i++)
+                {
+                    verticesProp.GetArrayElementAtIndex(i).vector2Value = vertices[i];
+                }
+                EditorUtility.SetDirty(_demo);
+            }
+
+            // 마우스 업 감지 - 드래그 종료
+            if (Event.current.type == EventType.MouseUp && _isDragging)
+            {
+                _isDragging = false;
+            }
         }
 
         /// <summary>
@@ -917,6 +1385,22 @@ namespace NavMesh2D.Editor
         {
             serializedObject.Update();
             _selectedObstacleIndex = _obstaclesProp.arraySize - 1;
+            _selectedWalkableIndex = -1;
+            _isEditingWalkable = false;
+            _selectedVertexIndex = -1;
+            InvalidateCache();
+            SceneView.RepaintAll();
+        }
+
+        /// <summary>
+        /// 새로 추가된 워커블 선택 및 편집 모드 진입
+        /// </summary>
+        private void SelectNewWalkable()
+        {
+            serializedObject.Update();
+            _selectedWalkableIndex = _walkablesProp.arraySize - 1;
+            _selectedObstacleIndex = -1;
+            _isEditingWalkable = true;
             _selectedVertexIndex = -1;
             InvalidateCache();
             SceneView.RepaintAll();
@@ -932,6 +1416,139 @@ namespace NavMesh2D.Editor
             _cachedVerticesPropObstacleIndex = -1;
             _cachedVerticesProp = null;
             _allObstaclesCacheDirty = true;  // 전체 장애물 캐시도 무효화
+            _allWalkablesCacheDirty = true;  // 전체 워커블 캐시도 무효화
+        }
+
+        /// <summary>
+        /// 선택된 폴리곤의 에지를 분할
+        /// </summary>
+        private void SubdivideSelectedPolygonEdges()
+        {
+            // 선택된 폴리곤 확인
+            SerializedProperty targetProp = null;
+            int targetIndex = -1;
+            string typeName = "";
+
+            if (_isEditingWalkable && _selectedWalkableIndex >= 0 && _walkablesProp != null && _selectedWalkableIndex < _walkablesProp.arraySize)
+            {
+                targetProp = _walkablesProp.GetArrayElementAtIndex(_selectedWalkableIndex);
+                targetIndex = _selectedWalkableIndex;
+                typeName = "워커블";
+            }
+            else if (!_isEditingWalkable && _selectedObstacleIndex >= 0 && _selectedObstacleIndex < _obstaclesProp.arraySize)
+            {
+                targetProp = _obstaclesProp.GetArrayElementAtIndex(_selectedObstacleIndex);
+                targetIndex = _selectedObstacleIndex;
+                typeName = "장애물";
+            }
+
+            if (targetProp == null)
+            {
+                EditorUtility.DisplayDialog("Subdivide Edges", "편집 중인 폴리곤이 없습니다.\n장애물 또는 워커블을 먼저 선택해주세요.", "OK");
+                return;
+            }
+
+            var verticesProp = targetProp.FindPropertyRelative("vertices");
+            if (verticesProp == null || verticesProp.arraySize < 3)
+            {
+                EditorUtility.DisplayDialog("Subdivide Edges", "유효하지 않은 폴리곤입니다.", "OK");
+                return;
+            }
+
+            // maxEdgeLength 입력 받기
+            float maxEdgeLength = EditorPrefs.GetFloat("NavMesh2D_MaxEdgeLength", 2f);
+            maxEdgeLength = EditorUtility.DisplayDialogComplex(
+                "Subdivide Edges",
+                $"최대 에지 길이를 입력하세요.\n현재 설정: {maxEdgeLength:F1}\n\n이 길이를 초과하는 에지가 분할됩니다.",
+                "확인 (2.0)", "취소", "확인 (1.0)") switch
+            {
+                0 => 2.0f,
+                2 => 1.0f,
+                _ => -1f  // 취소
+            };
+
+            if (maxEdgeLength < 0)
+                return;
+
+            EditorPrefs.SetFloat("NavMesh2D_MaxEdgeLength", maxEdgeLength);
+
+            // Undo 등록
+            Undo.RecordObject(_demo, $"Subdivide {typeName} Edges");
+            serializedObject.Update();
+
+            // 에지 분할 수행
+            int subdivideCount = SubdivideEdges(verticesProp, maxEdgeLength);
+
+            serializedObject.ApplyModifiedProperties();
+            InvalidateCache();
+            EditorUtility.SetDirty(_demo);
+            SceneView.RepaintAll();
+
+            if (subdivideCount > 0)
+            {
+                Debug.Log($"[Subdivide] {typeName} #{targetIndex}: {subdivideCount}개 에지 분할됨 (maxLength={maxEdgeLength:F1})");
+            }
+            else
+            {
+                Debug.Log($"[Subdivide] {typeName} #{targetIndex}: 분할할 에지 없음 (모든 에지가 {maxEdgeLength:F1} 이하)");
+            }
+        }
+
+        /// <summary>
+        /// 에지 분할 수행
+        /// </summary>
+        /// <param name="verticesProp">정점 배열 프로퍼티</param>
+        /// <param name="maxEdgeLength">최대 에지 길이</param>
+        /// <returns>분할된 에지 수</returns>
+        private int SubdivideEdges(SerializedProperty verticesProp, float maxEdgeLength)
+        {
+            int subdivideCount = 0;
+            float maxLengthSqr = maxEdgeLength * maxEdgeLength;
+
+            // 역순으로 순회 (삽입해도 인덱스 꼬임 방지)
+            // 하지만 폴리곤이라 순환하므로 여러 패스 필요
+            bool anySubdivided = true;
+            int maxIterations = 100;  // 무한루프 방지
+            int iteration = 0;
+
+            while (anySubdivided && iteration < maxIterations)
+            {
+                anySubdivided = false;
+                iteration++;
+
+                for (int i = verticesProp.arraySize - 1; i >= 0; i--)
+                {
+                    int next = (i + 1) % verticesProp.arraySize;
+                    Vector2 a = verticesProp.GetArrayElementAtIndex(i).vector2Value;
+                    Vector2 b = verticesProp.GetArrayElementAtIndex(next).vector2Value;
+
+                    float lengthSqr = (b - a).sqrMagnitude;
+                    if (lengthSqr > maxLengthSqr)
+                    {
+                        // 중점 삽입
+                        Vector2 mid = (a + b) / 2f;
+
+                        // i 다음 위치에 삽입 (next 위치)
+                        int insertIndex = (i + 1);
+                        if (insertIndex >= verticesProp.arraySize)
+                        {
+                            // 마지막-첫번째 에지의 경우 맨 끝에 삽입
+                            verticesProp.InsertArrayElementAtIndex(verticesProp.arraySize);
+                            verticesProp.GetArrayElementAtIndex(verticesProp.arraySize - 1).vector2Value = mid;
+                        }
+                        else
+                        {
+                            verticesProp.InsertArrayElementAtIndex(insertIndex);
+                            verticesProp.GetArrayElementAtIndex(insertIndex).vector2Value = mid;
+                        }
+
+                        subdivideCount++;
+                        anySubdivided = true;
+                    }
+                }
+            }
+
+            return subdivideCount;
         }
     }
 }

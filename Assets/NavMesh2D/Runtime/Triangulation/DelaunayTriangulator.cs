@@ -204,8 +204,9 @@ namespace NavMesh2D.Triangulation
         /// </summary>
         /// <param name="boundary">외부 경계 폴리곤</param>
         /// <param name="obstacles">장애물 폴리곤들 (구멍)</param>
+        /// <param name="additionalPoints">메시 품질 개선용 추가 점들 (제약 조건 없음)</param>
         /// <returns>삼각형 목록</returns>
-        public List<Triangle2D> Triangulate(Polygon2D boundary, List<Polygon2D> obstacles = null)
+        public List<Triangle2D> Triangulate(Polygon2D boundary, List<Polygon2D> obstacles = null, List<Vector2Fixed> additionalPoints = null)
         {
             // 초기화
             _constraints.Clear();
@@ -268,6 +269,28 @@ namespace NavMesh2D.Triangulation
                 }
             }
 
+            // 추가 점 (메시 품질 개선용 - 제약 조건 없음)
+            // 중복 점은 degenerate 삼각형을 발생시키므로 제외
+            if (additionalPoints != null)
+            {
+                foreach (var p in additionalPoints)
+                {
+                    bool isDuplicate = false;
+                    foreach (var existing in allPoints)
+                    {
+                        if (existing == p)
+                        {
+                            isDuplicate = true;
+                            break;
+                        }
+                    }
+                    if (!isDuplicate)
+                    {
+                        allPoints.Add(p);
+                    }
+                }
+            }
+
             // 2. 기본 들로네 삼각분할 수행
             _triangles = _baseTriangulator.Triangulate(allPoints);
 
@@ -288,6 +311,9 @@ namespace NavMesh2D.Triangulation
 
             // 5. 경계 외부 삼각형 제거
             RemoveTrianglesOutsideBoundary(boundary);
+
+            // 6. Degenerate 삼각형 제거 (면적이 0이거나 매우 작은 삼각형)
+            RemoveDegenerateTriangles();
 
             return _triangles;
         }
@@ -459,6 +485,29 @@ namespace NavMesh2D.Triangulation
             {
                 Vector2Fixed centroid = tri.Centroid;
                 return !boundary.ContainsPoint(centroid);
+            });
+        }
+
+        /// <summary>
+        /// Degenerate 삼각형 제거 (면적이 0이거나 매우 작은 삼각형, 중복 정점)
+        /// </summary>
+        private void RemoveDegenerateTriangles()
+        {
+            // 최소 면적 임계값 (Fixed64 기준 매우 작은 값)
+            Fixed64 minArea = Fixed64.One / (Fixed64)10000;
+
+            _triangles.RemoveAll(tri =>
+            {
+                // 중복 정점 검사
+                if (tri.V0 == tri.V1 || tri.V1 == tri.V2 || tri.V2 == tri.V0)
+                    return true;
+
+                // 면적이 0이거나 매우 작은 삼각형
+                Fixed64 area = tri.Area();
+                if (area < Fixed64.Zero)
+                    area = -area;  // 절대값
+
+                return area < minArea;
             });
         }
 

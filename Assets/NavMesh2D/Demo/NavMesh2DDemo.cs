@@ -23,6 +23,9 @@ namespace NavMesh2D.Demo
         [Header("=== Obstacles ===")]
         [SerializeField] private List<PolygonObstacle> _obstacles = new List<PolygonObstacle>();
 
+        [Header("=== Walkable Polygons (메시 품질 개선용) ===")]
+        [SerializeField] private List<PolygonObstacle> _walkables = new List<PolygonObstacle>();
+
         [Header("=== Components ===")]
         [SerializeField] private NavMesh2DVisualizer _visualizer;
 
@@ -1367,11 +1370,29 @@ namespace NavMesh2D.Demo
                 }
             }
 
+            // 2. 워커블 폴리곤 정점 수집 (메시 품질 개선용)
+            List<Vector2Fixed> walkablePoints = new List<Vector2Fixed>();
+            if (_walkables != null)
+            {
+                foreach (var walk in _walkables)
+                {
+                    if (walk != null && walk.vertices != null && walk.vertices.Length >= 3)
+                    {
+                        foreach (var v in walk.vertices)
+                        {
+                            Vector2Fixed vertex = new Vector2Fixed((Fixed64)v.x, (Fixed64)v.y);
+                            Vector2Fixed snapped = SnapVertex(vertex, canonicalVertices);
+                            walkablePoints.Add(snapped);
+                        }
+                    }
+                }
+            }
+
             // Asset이 있으면 거기에 저장, 없으면 런타임 생성
             if (_navMeshAsset != null)
             {
                 _navMesh = _navMeshAsset;
-                _builder.BuildFromRect(_navMesh, _boundaryMin, _boundaryMax, obstacles.Count > 0 ? obstacles : null, _maxTriangleCount);
+                _builder.BuildFromRect(_navMesh, _boundaryMin, _boundaryMax, obstacles.Count > 0 ? obstacles : null, _maxTriangleCount, walkablePoints.Count > 0 ? walkablePoints : null);
 
 #if UNITY_EDITOR
                 UnityEditor.EditorUtility.SetDirty(_navMeshAsset);
@@ -1992,6 +2013,150 @@ namespace NavMesh2D.Demo
             }
         }
 
+        #region Walkable Polygons
+
+        /// <summary>
+        /// 사각형 워커블 폴리곤 추가
+        /// </summary>
+        [ContextMenu("Walkables/Add Rectangle")]
+        public void AddRectangleWalkable() => AddRectangleWalkable(Vector2.zero);
+
+        public void AddRectangleWalkable(Vector2 center)
+        {
+            if (_walkables == null) _walkables = new List<PolygonObstacle>();
+
+            var walkable = new PolygonObstacle
+            {
+                name = $"WalkRect {_walkables.Count}",
+                vertices = new Vector2[]
+                {
+                    center + new Vector2(-2, -1),
+                    center + new Vector2(2, -1),
+                    center + new Vector2(2, 1),
+                    center + new Vector2(-2, 1)
+                }
+            };
+            _walkables.Add(walkable);
+
+            if (_autoRebuildOnChange && Application.isPlaying)
+            {
+                RebuildNavMesh();
+            }
+        }
+
+        /// <summary>
+        /// 삼각형 워커블 폴리곤 추가
+        /// </summary>
+        [ContextMenu("Walkables/Add Triangle")]
+        public void AddTriangleWalkable() => AddTriangleWalkable(Vector2.zero);
+
+        public void AddTriangleWalkable(Vector2 center)
+        {
+            if (_walkables == null) _walkables = new List<PolygonObstacle>();
+
+            var walkable = new PolygonObstacle
+            {
+                name = $"WalkTri {_walkables.Count}",
+                vertices = new Vector2[]
+                {
+                    center + new Vector2(0, 2),
+                    center + new Vector2(-2, -1),
+                    center + new Vector2(2, -1)
+                }
+            };
+            _walkables.Add(walkable);
+
+            if (_autoRebuildOnChange && Application.isPlaying)
+            {
+                RebuildNavMesh();
+            }
+        }
+
+        /// <summary>
+        /// 자유 폴리곤 워커블 추가 (오각형 시작)
+        /// </summary>
+        [ContextMenu("Walkables/Add Polygon")]
+        public void AddPolygonWalkable() => AddPolygonWalkable(Vector2.zero);
+
+        public void AddPolygonWalkable(Vector2 center)
+        {
+            if (_walkables == null) _walkables = new List<PolygonObstacle>();
+
+            float radius = 1.5f;
+            int segments = 5;
+            Vector2[] verts = new Vector2[segments];
+
+            for (int i = 0; i < segments; i++)
+            {
+                float angle = (i / (float)segments) * Mathf.PI * 2f - Mathf.PI / 2f;
+                verts[i] = center + new Vector2(Mathf.Cos(angle) * radius, Mathf.Sin(angle) * radius);
+            }
+
+            var walkable = new PolygonObstacle
+            {
+                name = $"WalkPoly {_walkables.Count}",
+                vertices = verts
+            };
+            _walkables.Add(walkable);
+
+            if (_autoRebuildOnChange && Application.isPlaying)
+            {
+                RebuildNavMesh();
+            }
+        }
+
+        /// <summary>
+        /// 원형 워커블 폴리곤 추가 (8각형 근사)
+        /// </summary>
+        [ContextMenu("Walkables/Add Circle (8-gon)")]
+        public void AddCircleWalkable() => AddCircleWalkable(Vector2.zero);
+
+        public void AddCircleWalkable(Vector2 center)
+        {
+            if (_walkables == null) _walkables = new List<PolygonObstacle>();
+
+            float radius = 2f;
+            int segments = 8;
+            Vector2[] verts = new Vector2[segments];
+
+            for (int i = 0; i < segments; i++)
+            {
+                float angle = (i / (float)segments) * Mathf.PI * 2f;
+                verts[i] = center + new Vector2(Mathf.Cos(angle) * radius, Mathf.Sin(angle) * radius);
+            }
+
+            var walkable = new PolygonObstacle
+            {
+                name = $"WalkCircle {_walkables.Count}",
+                vertices = verts
+            };
+            _walkables.Add(walkable);
+
+            if (_autoRebuildOnChange && Application.isPlaying)
+            {
+                RebuildNavMesh();
+            }
+        }
+
+        /// <summary>
+        /// 모든 워커블 폴리곤 제거
+        /// </summary>
+        [ContextMenu("Walkables/Clear All")]
+        public void ClearAllWalkables()
+        {
+            if (_walkables != null)
+            {
+                _walkables.Clear();
+            }
+
+            if (_autoRebuildOnChange && Application.isPlaying)
+            {
+                RebuildNavMesh();
+            }
+        }
+
+        #endregion
+
         private void OnDrawGizmos()
         {
             // 경계 표시
@@ -2003,7 +2168,7 @@ namespace NavMesh2D.Demo
             Gizmos.DrawLine(new Vector3(max.x, max.y, 0), new Vector3(min.x, max.y, 0));
             Gizmos.DrawLine(new Vector3(min.x, max.y, 0), new Vector3(min.x, min.y, 0));
 
-            // 장애물 표시
+            // 장애물 표시 (빨간색)
             Gizmos.color = new Color(1, 0, 0, 0.5f);
             foreach (var obs in _obstacles)
             {
@@ -2015,6 +2180,25 @@ namespace NavMesh2D.Demo
                         Vector3 a = new Vector3(obs.vertices[i].x, obs.vertices[i].y, 0);
                         Vector3 b = new Vector3(obs.vertices[next].x, obs.vertices[next].y, 0);
                         Gizmos.DrawLine(a, b);
+                    }
+                }
+            }
+
+            // 워커블 폴리곤 표시 (노란색)
+            Gizmos.color = new Color(1, 1, 0, 0.5f);
+            if (_walkables != null)
+            {
+                foreach (var walk in _walkables)
+                {
+                    if (walk != null && walk.vertices != null && walk.vertices.Length >= 3)
+                    {
+                        for (int i = 0; i < walk.vertices.Length; i++)
+                        {
+                            int next = (i + 1) % walk.vertices.Length;
+                            Vector3 a = new Vector3(walk.vertices[i].x, walk.vertices[i].y, 0);
+                            Vector3 b = new Vector3(walk.vertices[next].x, walk.vertices[next].y, 0);
+                            Gizmos.DrawLine(a, b);
+                        }
                     }
                 }
             }

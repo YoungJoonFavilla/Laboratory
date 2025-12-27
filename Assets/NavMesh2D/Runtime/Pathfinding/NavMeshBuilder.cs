@@ -85,7 +85,8 @@ namespace NavMesh2D.Pathfinding
         /// <param name="max">최대 좌표</param>
         /// <param name="obstacles">장애물 폴리곤들</param>
         /// <param name="maxTriangleCount">최대 삼각형 개수 (0이면 세분화 안함)</param>
-        public void BuildFromRect(NavMesh2DData target, Vector2 min, Vector2 max, List<Polygon2D> obstacles = null, int maxTriangleCount = 0)
+        /// <param name="additionalPoints">메시 품질 개선용 추가 점들 (장애물 아님)</param>
+        public void BuildFromRect(NavMesh2DData target, Vector2 min, Vector2 max, List<Polygon2D> obstacles = null, int maxTriangleCount = 0, List<Vector2Fixed> additionalPoints = null)
         {
             // 직사각형 경계 폴리곤 생성 (CCW)
             Polygon2D boundary = new Polygon2D(
@@ -95,8 +96,8 @@ namespace NavMesh2D.Pathfinding
                 new Vector2Fixed((Fixed64)min.x, (Fixed64)max.y)
             );
 
-            // 삼각분할
-            List<Triangle2D> triangles = _triangulator.Triangulate(boundary, obstacles);
+            // 삼각분할 (추가 점 포함)
+            List<Triangle2D> triangles = _triangulator.Triangulate(boundary, obstacles, additionalPoints);
 
             if (triangles.Count == 0)
             {
