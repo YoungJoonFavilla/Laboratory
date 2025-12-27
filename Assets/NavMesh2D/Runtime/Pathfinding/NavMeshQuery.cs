@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Diagnostics;
 using FixedMathSharp;
 using NavMesh2D.Geometry;
 
@@ -48,6 +49,10 @@ namespace NavMesh2D.Pathfinding
             /// 디버그용: 탐색한 삼각형 수
             /// </summary>
             public int ExploredCount;
+
+            // 타이밍 (ticks)
+            public long TicksAStar;
+            public long TicksFunnel;
         }
 
         public NavMeshQuery(NavMesh2DData navMesh)
@@ -84,7 +89,10 @@ namespace NavMesh2D.Pathfinding
             };
 
             // 1. A*로 삼각형 경로 찾기
+            long t0 = Stopwatch.GetTimestamp();
             var astarResult = _aStar.FindPath(start, end);
+            long t1 = Stopwatch.GetTimestamp();
+            result.TicksAStar = t1 - t0;
 
             if (!astarResult.Success)
             {
@@ -105,14 +113,16 @@ namespace NavMesh2D.Pathfinding
                 return result;
             }
 
-            // 3. 포탈 방향 정규화
+            // 3. 포탈 방향 정규화 + Funnel Algorithm
+            t0 = Stopwatch.GetTimestamp();
             var normalizedPortals = _funnel.NormalizePortals(astarResult.Portals, start);
-
-            // 4. Funnel Algorithm으로 경로 스무딩
             result.Path = _funnel.StringPull(start, end, normalizedPortals);
+            t1 = Stopwatch.GetTimestamp();
+            result.TicksFunnel = t1 - t0;
+
             result.Success = true;
 
-            // 5. 경로 길이 계산
+            // 4. 경로 길이 계산
             result.PathLength = CalculatePathLength(result.Path);
 
             return result;

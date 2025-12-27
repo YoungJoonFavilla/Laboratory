@@ -1,202 +1,270 @@
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using FixedMathSharp;
 using NavMesh2D.Geometry;
 
 namespace NavMesh2D.Pathfinding
 {
     /// <summary>
-    /// Simple Stupid Funnel Algorithm
+    /// Simple Stupid Funnel Algorithm (최적화 버전)
     /// 삼각형 경로를 통과하는 최단 경로를 계산
-    ///
-    /// 참고: https://digestingduck.blogspot.com/2010/03/simple-stupid-funnel-algorithm.html
+    /// - List 재사용으로 GC 최소화
+    /// - Raw long 연산으로 Fixed64 오버헤드 제거
+    /// - NormalizePortals 인라인화
     /// </summary>
     public class FunnelAlgorithm
     {
+        // 재사용 버퍼
+        private readonly List<Vector2Fixed> _pathBuffer = new List<Vector2Fixed>(32);
+        private readonly List<long> _portalLeftX = new List<long>(32);
+        private readonly List<long> _portalLeftY = new List<long>(32);
+        private readonly List<long> _portalRightX = new List<long>(32);
+        private readonly List<long> _portalRightY = new List<long>(32);
+
         /// <summary>
-        /// 포탈 리스트에서 최단 경로 계산
+        /// 포탈 리스트에서 최단 경로 계산 (NormalizePortals 인라인)
         /// </summary>
-        /// <param name="start">시작점</param>
-        /// <param name="end">끝점</param>
-        /// <param name="portals">포탈 리스트 (A*에서 생성)</param>
-        /// <returns>최단 경로 웨이포인트 리스트</returns>
         public List<Vector2Fixed> StringPull(Vector2Fixed start, Vector2Fixed end, List<TriangleAStar.Portal> portals)
         {
-            var path = new List<Vector2Fixed>();
+            _pathBuffer.Clear();
 
             // 포탈이 없으면 직선 경로
             if (portals == null || portals.Count == 0)
             {
-                path.Add(start);
-                path.Add(end);
-                return path;
+                _pathBuffer.Add(start);
+                _pathBuffer.Add(end);
+                return _pathBuffer;
             }
 
-            // 포탈 리스트 복사 및 시작/끝 포탈 추가
-            var portalList = new List<TriangleAStar.Portal>();
+            // 포탈을 raw long 배열로 변환 + 정규화 인라인
+            _portalLeftX.Clear();
+            _portalLeftY.Clear();
+            _portalRightX.Clear();
+            _portalRightY.Clear();
 
-            // 시작점 포탈 (점)
-            portalList.Add(new TriangleAStar.Portal(start, start));
+            long startX = start.x.m_rawValue;
+            long startY = start.y.m_rawValue;
+            long endX = end.x.m_rawValue;
+            long endY = end.y.m_rawValue;
 
-            // 중간 포탈들
-            portalList.AddRange(portals);
+            // 시작점 포탈
+            _portalLeftX.Add(startX);
+            _portalLeftY.Add(startY);
+            _portalRightX.Add(startX);
+            _portalRightY.Add(startY);
 
-            // 끝점 포탈 (점)
-            portalList.Add(new TriangleAStar.Portal(end, end));
+            // 중간 포탈들 (정규화 인라인)
+            long prevCenterX = startX;
+            long prevCenterY = startY;
+
+            for (int i = 0; i < portals.Count; i++)
+            {
+                long lx = portals[i].Left.x.m_rawValue;
+                long ly = portals[i].Left.y.m_rawValue;
+                long rx = portals[i].Right.x.m_rawValue;
+                long ry = portals[i].Right.y.m_rawValue;
+
+                // 포탈 중심
+                long centerX = (lx + rx) >> 1;
+                long centerY = (ly + ry) >> 1;
+
+                // 진행 방향
+                long dirX = centerX - prevCenterX;
+                long dirY = centerY - prevCenterY;
+
+                // 포탈 벡터 (Left → Right)
+                long portalVecX = rx - lx;
+                long portalVecY = ry - ly;
+
+                // 외적 (dir × portalVec) - 방향 확인
+                // cross > 0 이면 스왑 필요
+                long cross = MulRaw(dirX, portalVecY) - MulRaw(dirY, portalVecX);
+
+                if (cross > 0)
+                {
+                    // 스왑
+                    _portalLeftX.Add(rx);
+                    _portalLeftY.Add(ry);
+                    _portalRightX.Add(lx);
+                    _portalRightY.Add(ly);
+                }
+                else
+                {
+                    _portalLeftX.Add(lx);
+                    _portalLeftY.Add(ly);
+                    _portalRightX.Add(rx);
+                    _portalRightY.Add(ry);
+                }
+
+                prevCenterX = centerX;
+                prevCenterY = centerY;
+            }
+
+            // 끝점 포탈
+            _portalLeftX.Add(endX);
+            _portalLeftY.Add(endY);
+            _portalRightX.Add(endX);
+            _portalRightY.Add(endY);
+
+            int portalCount = _portalLeftX.Count;
 
             // Funnel 초기화
-            Vector2Fixed apex = start;       // 깔때기 꼭지점
-            Vector2Fixed left = start;       // 왼쪽 경계
-            Vector2Fixed right = start;      // 오른쪽 경계
+            long apexX = startX, apexY = startY;
+            long leftX = startX, leftY = startY;
+            long rightX = startX, rightY = startY;
             int apexIndex = 0;
             int leftIndex = 0;
             int rightIndex = 0;
 
-            path.Add(start);
+            _pathBuffer.Add(start);
 
-            for (int i = 1; i < portalList.Count; i++)
+            for (int i = 1; i < portalCount; i++)
             {
-                Vector2Fixed portalLeft = portalList[i].Left;
-                Vector2Fixed portalRight = portalList[i].Right;
+                long portalLeftX = _portalLeftX[i];
+                long portalLeftY = _portalLeftY[i];
+                long portalRightX = _portalRightX[i];
+                long portalRightY = _portalRightY[i];
 
                 // 오른쪽 경계 업데이트 시도
-                if (TriArea2(apex, right, portalRight) <= Fixed64.Zero)
+                if (TriArea2Raw(apexX, apexY, rightX, rightY, portalRightX, portalRightY) <= 0)
                 {
-                    if (apex == right || TriArea2(apex, left, portalRight) > Fixed64.Zero)
+                    if ((apexX == rightX && apexY == rightY) ||
+                        TriArea2Raw(apexX, apexY, leftX, leftY, portalRightX, portalRightY) > 0)
                     {
                         // 오른쪽 좁히기
-                        right = portalRight;
+                        rightX = portalRightX;
+                        rightY = portalRightY;
                         rightIndex = i;
                     }
                     else
                     {
-                        // 오른쪽이 왼쪽을 넘어감 - 왼쪽을 새 apex로
-                        // 중복 점 체크
-                        if (path[path.Count - 1] != left)
+                        // 왼쪽을 새 apex로
+                        var leftPoint = new Vector2Fixed(
+                            Fixed64.FromRaw(leftX),
+                            Fixed64.FromRaw(leftY));
+
+                        if (_pathBuffer.Count == 0 || _pathBuffer[_pathBuffer.Count - 1] != leftPoint)
                         {
-                            path.Add(left);
+                            _pathBuffer.Add(leftPoint);
                         }
 
-                        // 새 apex에서 다시 시작
-                        apex = left;
+                        apexX = leftX;
+                        apexY = leftY;
                         apexIndex = leftIndex;
 
-                        // 포탈 인덱스 리셋
-                        left = apex;
-                        right = apex;
+                        leftX = apexX;
+                        leftY = apexY;
+                        rightX = apexX;
+                        rightY = apexY;
                         leftIndex = apexIndex;
                         rightIndex = apexIndex;
 
-                        // 다음 포탈부터 다시 스캔
                         i = apexIndex;
                         continue;
                     }
                 }
 
                 // 왼쪽 경계 업데이트 시도
-                if (TriArea2(apex, left, portalLeft) >= Fixed64.Zero)
+                if (TriArea2Raw(apexX, apexY, leftX, leftY, portalLeftX, portalLeftY) >= 0)
                 {
-                    if (apex == left || TriArea2(apex, right, portalLeft) < Fixed64.Zero)
+                    if ((apexX == leftX && apexY == leftY) ||
+                        TriArea2Raw(apexX, apexY, rightX, rightY, portalLeftX, portalLeftY) < 0)
                     {
                         // 왼쪽 좁히기
-                        left = portalLeft;
+                        leftX = portalLeftX;
+                        leftY = portalLeftY;
                         leftIndex = i;
                     }
                     else
                     {
-                        // 왼쪽이 오른쪽을 넘어감 - 오른쪽을 새 apex로
-                        // 중복 점 체크
-                        if (path[path.Count - 1] != right)
+                        // 오른쪽을 새 apex로
+                        var rightPoint = new Vector2Fixed(
+                            Fixed64.FromRaw(rightX),
+                            Fixed64.FromRaw(rightY));
+
+                        if (_pathBuffer.Count == 0 || _pathBuffer[_pathBuffer.Count - 1] != rightPoint)
                         {
-                            path.Add(right);
+                            _pathBuffer.Add(rightPoint);
                         }
 
-                        // 새 apex에서 다시 시작
-                        apex = right;
+                        apexX = rightX;
+                        apexY = rightY;
                         apexIndex = rightIndex;
 
-                        // 포탈 인덱스 리셋
-                        left = apex;
-                        right = apex;
+                        leftX = apexX;
+                        leftY = apexY;
+                        rightX = apexX;
+                        rightY = apexY;
                         leftIndex = apexIndex;
                         rightIndex = apexIndex;
 
-                        // 다음 포탈부터 다시 스캔
                         i = apexIndex;
                         continue;
                     }
                 }
             }
 
-            // 끝점 추가 (이미 추가되지 않았다면)
-            if (path.Count == 0 || path[path.Count - 1] != end)
+            // 끝점 추가
+            if (_pathBuffer.Count == 0 || _pathBuffer[_pathBuffer.Count - 1] != end)
             {
-                path.Add(end);
+                _pathBuffer.Add(end);
             }
 
-            return path;
+            return _pathBuffer;
         }
 
         /// <summary>
-        /// 삼각형 부호 있는 면적의 2배 계산 (Mikko Mononen 공식)
-        /// 이 공식은 StringPull의 비교 연산자와 맞춰져 있음
-        /// Y-up 좌표계에서: 음수 = 왼쪽, 양수 = 오른쪽
+        /// 삼각형 부호 있는 면적의 2배 (raw long)
         /// </summary>
-        private Fixed64 TriArea2(Vector2Fixed a, Vector2Fixed b, Vector2Fixed c)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private long TriArea2Raw(long ax, long ay, long bx, long by, long cx, long cy)
         {
-            Fixed64 ax = b.x - a.x;
-            Fixed64 ay = b.y - a.y;
-            Fixed64 bx = c.x - a.x;
-            Fixed64 by = c.y - a.y;
-            return bx * ay - ax * by;
+            long abx = bx - ax;
+            long aby = by - ay;
+            long acx = cx - ax;
+            long acy = cy - ay;
+            return MulRaw(acx, aby) - MulRaw(abx, acy);
         }
 
         /// <summary>
-        /// 포탈 방향 정규화 (왼쪽/오른쪽이 진행 방향 기준으로 올바른지 확인)
+        /// Fixed64 곱셈 (raw long)
         /// </summary>
-        /// <param name="portals">포탈 리스트</param>
-        /// <param name="start">시작점</param>
-        /// <returns>정규화된 포탈 리스트</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private long MulRaw(long a, long b)
+        {
+            bool negA = a < 0;
+            bool negB = b < 0;
+            if (negA) a = -a;
+            if (negB) b = -b;
+
+            ulong aLo = (ulong)a & 0xFFFFFFFF;
+            ulong aHi = (ulong)a >> 32;
+            ulong bLo = (ulong)b & 0xFFFFFFFF;
+            ulong bHi = (ulong)b >> 32;
+
+            ulong loLo = aLo * bLo;
+            ulong loHi = aLo * bHi;
+            ulong hiLo = aHi * bLo;
+            ulong hiHi = aHi * bHi;
+
+            ulong mid = loHi + hiLo + (loLo >> 32);
+            ulong result = hiHi + (mid >> 32);
+            result = (result << 32) | (mid & 0xFFFFFFFF);
+
+            if ((loLo & 0x80000000) != 0)
+                result++;
+
+            long signedResult = (long)result;
+            return (negA != negB) ? -signedResult : signedResult;
+        }
+
+        /// <summary>
+        /// 포탈 방향 정규화 (하위 호환용 - 이제 StringPull에 인라인됨)
+        /// </summary>
         public List<TriangleAStar.Portal> NormalizePortals(List<TriangleAStar.Portal> portals, Vector2Fixed start)
         {
-            if (portals == null || portals.Count == 0)
-                return portals;
-
-            var normalized = new List<TriangleAStar.Portal>(portals.Count);
-            Vector2Fixed prevCenter = start;
-
-            for (int i = 0; i < portals.Count; i++)
-            {
-                var portal = portals[i];
-                Vector2Fixed center = new Vector2Fixed(
-                    (portal.Left.x + portal.Right.x) / (Fixed64)2,
-                    (portal.Left.y + portal.Right.y) / (Fixed64)2
-                );
-
-                // 진행 방향
-                Vector2Fixed dir = center - prevCenter;
-
-                // 포탈 벡터 (Left → Right)
-                Vector2Fixed portalVec = portal.Right - portal.Left;
-
-                // 외적으로 방향 확인 (dir × portalVec)
-                // dir이 진행 방향일 때, Left→Right 벡터가 왼쪽에서 오른쪽으로 가야 함
-                // 즉, portalVec은 dir의 오른쪽(시계방향)에 있어야 함 → cross < 0 이 정상
-                Fixed64 cross = dir.x * portalVec.y - dir.y * portalVec.x;
-
-                if (cross > Fixed64.Zero)
-                {
-                    // portalVec이 왼쪽에 있음 (반대 방향) → 스왑
-                    normalized.Add(new TriangleAStar.Portal(portal.Right, portal.Left));
-                }
-                else
-                {
-                    normalized.Add(portal);
-                }
-
-                prevCenter = center;
-            }
-
-            return normalized;
+            // StringPull에서 인라인으로 처리하므로 그냥 반환
+            return portals;
         }
     }
 }

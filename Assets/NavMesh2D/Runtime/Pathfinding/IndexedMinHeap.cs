@@ -3,16 +3,16 @@ using System.Collections.Generic;
 namespace NavMesh2D.Pathfinding
 {
     /// <summary>
-    /// A*용 Indexed Min-Heap (raw long 최적화)
-    /// F값 기준 최소 힙 + 삼각형 인덱스로 O(1) 조회
+    /// A*용 Indexed Min-Heap (배열 기반 최적화)
+    /// Dictionary 대신 배열 + Generation 트릭 사용
     /// </summary>
     public class IndexedMinHeap
     {
         private struct HeapNode
         {
             public int TriangleIndex;
-            public long GScore;  // raw Fixed64 값
-            public long HScore;  // raw Fixed64 값
+            public long GScore;
+            public long HScore;
             public long FScore => GScore + HScore;
 
             public HeapNode(int triangleIndex, long g, long h)
@@ -23,15 +23,36 @@ namespace NavMesh2D.Pathfinding
             }
         }
 
-        private readonly List<HeapNode> _heap = new List<HeapNode>();
-        private readonly Dictionary<int, int> _indexMap = new Dictionary<int, int>();
+        private readonly HeapNode[] _heap;
+        private readonly int[] _heapPosition;      // triangleIndex → heap position
+        private readonly int[] _positionGeneration; // 해당 position이 유효한 generation
+        private int _heapCount;
+        private int _generation;
+        private readonly int _maxCapacity;
 
-        public int Count => _heap.Count;
+        public int Count => _heapCount;
+
+        public IndexedMinHeap(int maxTriangleCount)
+        {
+            _maxCapacity = maxTriangleCount;
+            _heap = new HeapNode[maxTriangleCount];
+            _heapPosition = new int[maxTriangleCount];
+            _positionGeneration = new int[maxTriangleCount];
+            _heapCount = 0;
+            _generation = 0;
+        }
 
         public void Clear()
         {
-            _heap.Clear();
-            _indexMap.Clear();
+            _heapCount = 0;
+            _generation++;
+
+            // Generation 오버플로우 체크
+            if (_generation == int.MaxValue)
+            {
+                _generation = 1;
+                System.Array.Clear(_positionGeneration, 0, _positionGeneration.Length);
+            }
         }
 
         /// <summary>
@@ -39,7 +60,7 @@ namespace NavMesh2D.Pathfinding
         /// </summary>
         public bool Contains(int triangleIndex)
         {
-            return _indexMap.ContainsKey(triangleIndex);
+            return _positionGeneration[triangleIndex] == _generation;
         }
 
         /// <summary>
@@ -47,10 +68,11 @@ namespace NavMesh2D.Pathfinding
         /// </summary>
         public void Insert(int triangleIndex, long g, long h)
         {
-            HeapNode node = new HeapNode(triangleIndex, g, h);
-            int index = _heap.Count;
-            _heap.Add(node);
-            _indexMap[triangleIndex] = index;
+            int index = _heapCount;
+            _heap[index] = new HeapNode(triangleIndex, g, h);
+            _heapPosition[triangleIndex] = index;
+            _positionGeneration[triangleIndex] = _generation;
+            _heapCount++;
             SiftUp(index);
         }
 
@@ -61,20 +83,16 @@ namespace NavMesh2D.Pathfinding
         {
             HeapNode min = _heap[0];
 
-            int lastIndex = _heap.Count - 1;
-            if (lastIndex > 0)
+            _heapCount--;
+            if (_heapCount > 0)
             {
-                _heap[0] = _heap[lastIndex];
-                _indexMap[_heap[0].TriangleIndex] = 0;
-            }
-
-            _heap.RemoveAt(lastIndex);
-            _indexMap.Remove(min.TriangleIndex);
-
-            if (_heap.Count > 0)
-            {
+                _heap[0] = _heap[_heapCount];
+                _heapPosition[_heap[0].TriangleIndex] = 0;
                 SiftDown(0);
             }
+
+            // min은 더 이상 힙에 없음 (generation 무효화)
+            _positionGeneration[min.TriangleIndex] = 0;
 
             return (min.TriangleIndex, min.GScore, min.HScore);
         }
@@ -84,9 +102,10 @@ namespace NavMesh2D.Pathfinding
         /// </summary>
         public void UpdatePriority(int triangleIndex, long newG, long newH)
         {
-            if (!_indexMap.TryGetValue(triangleIndex, out int index))
+            if (_positionGeneration[triangleIndex] != _generation)
                 return;
 
+            int index = _heapPosition[triangleIndex];
             long oldF = _heap[index].FScore;
             _heap[index] = new HeapNode(triangleIndex, newG, newH);
             long newF = _heap[index].FScore;
@@ -116,17 +135,16 @@ namespace NavMesh2D.Pathfinding
 
         private void SiftDown(int index)
         {
-            int count = _heap.Count;
             while (true)
             {
                 int smallest = index;
                 int left = 2 * index + 1;
                 int right = 2 * index + 2;
 
-                if (left < count && _heap[left].FScore < _heap[smallest].FScore)
+                if (left < _heapCount && _heap[left].FScore < _heap[smallest].FScore)
                     smallest = left;
 
-                if (right < count && _heap[right].FScore < _heap[smallest].FScore)
+                if (right < _heapCount && _heap[right].FScore < _heap[smallest].FScore)
                     smallest = right;
 
                 if (smallest == index)
@@ -143,8 +161,8 @@ namespace NavMesh2D.Pathfinding
             _heap[a] = _heap[b];
             _heap[b] = temp;
 
-            _indexMap[_heap[a].TriangleIndex] = a;
-            _indexMap[_heap[b].TriangleIndex] = b;
+            _heapPosition[_heap[a].TriangleIndex] = a;
+            _heapPosition[_heap[b].TriangleIndex] = b;
         }
     }
 }

@@ -1074,6 +1074,8 @@ namespace NavMesh2D.Demo
             long totalMove = 0, totalHeur = 0, totalHeap = 0;
             int successCount = 0;
 
+            double freq = Stopwatch.Frequency / 1000.0;
+
             for (int i = 0; i < ITERATIONS; i++)
             {
                 Fixed64 startX = minX + (Fixed64)random.NextDouble() * rangeX;
@@ -1093,17 +1095,9 @@ namespace NavMesh2D.Demo
                     end = _query.ClampToNavMesh(end);
 
                 // A* 시간만 측정
-                var astarSw = Stopwatch.StartNew();
                 var astarResult = _query.FindPathAStarOnly(start, end);
-                astarSw.Stop();
-                double astarMs = (double)astarSw.ElapsedTicks / Stopwatch.Frequency * 1000.0;
 
-                // 전체 시간 측정 (A* + Funnel)
-                var totalSw = Stopwatch.StartNew();
-                var result = _query.FindPath(start, end);
-                totalSw.Stop();
-
-                if (result.Success)
+                if (astarResult.Success)
                 {
                     successCount++;
                     totalFindTri += astarResult.TicksFindTriangle;
@@ -1116,7 +1110,6 @@ namespace NavMesh2D.Demo
             }
 
             // 결과 출력
-            double freq = Stopwatch.Frequency / 1000.0;
             double findTriMs = totalFindTri / freq;
             double extractMs = totalExtract / freq;
             double getTriMs = totalGetTri / freq;
@@ -1124,15 +1117,146 @@ namespace NavMesh2D.Demo
             double heurMs = totalHeur / freq;
             double heapMs = totalHeap / freq;
             double totalMs = findTriMs + extractMs + getTriMs + moveMs + heurMs + heapMs;
+            double avgMs = totalMs / successCount;
 
             Debug.Log($"[PathDetailTest] {successCount}/{ITERATIONS} succeeded\n" +
-                $"  Total A* time: {totalMs:F2}ms\n" +
+                $"  Total A* time: {totalMs:F2}ms (avg: {avgMs:F4}ms/path)\n" +
                 $"  FindTri: {findTriMs:F2}ms ({findTriMs/totalMs*100:F1}%)\n" +
                 $"  Extract: {extractMs:F2}ms ({extractMs/totalMs*100:F1}%)\n" +
                 $"  GetTri:  {getTriMs:F2}ms ({getTriMs/totalMs*100:F1}%)\n" +
                 $"  Move:    {moveMs:F2}ms ({moveMs/totalMs*100:F1}%)\n" +
                 $"  Heur:    {heurMs:F2}ms ({heurMs/totalMs*100:F1}%)\n" +
                 $"  Heap:    {heapMs:F2}ms ({heapMs/totalMs*100:F1}%)");
+        }
+
+        /// <summary>
+        /// 순수 벤치마크 (내부 타이밍 없이 외부에서만 측정)
+        /// </summary>
+        [ContextMenu("Pure Benchmark (1000)")]
+        public void PureBenchmark()
+        {
+            if (_query == null)
+            {
+                Debug.LogError("[NavMesh2DDemo] NavMesh not built!");
+                return;
+            }
+
+            const int ITERATIONS = 1000;
+            var random = new System.Random(42);
+
+            Fixed64 minX = (Fixed64)_boundaryMin.x;
+            Fixed64 minY = (Fixed64)_boundaryMin.y;
+            Fixed64 rangeX = (Fixed64)_boundaryMax.x - minX;
+            Fixed64 rangeY = (Fixed64)_boundaryMax.y - minY;
+
+            // 테스트 케이스 미리 생성
+            var testCases = new List<(Vector2Fixed start, Vector2Fixed end)>();
+            for (int i = 0; i < ITERATIONS; i++)
+            {
+                Fixed64 startX = minX + (Fixed64)random.NextDouble() * rangeX;
+                Fixed64 startY = minY + (Fixed64)random.NextDouble() * rangeY;
+                Fixed64 endX = minX + (Fixed64)random.NextDouble() * rangeX;
+                Fixed64 endY = minY + (Fixed64)random.NextDouble() * rangeY;
+
+                var start = new Vector2Fixed(startX, startY);
+                var end = new Vector2Fixed(endX, endY);
+
+                int startTri = _navMesh.FindTriangleContainingPoint(start);
+                int endTri = _navMesh.FindTriangleContainingPoint(end);
+
+                if (startTri < 0)
+                    start = _query.ClampToNavMesh(start);
+                if (endTri < 0)
+                    end = _query.ClampToNavMesh(end);
+
+                testCases.Add((start, end));
+            }
+
+            // 순수 A* 벤치마크
+            int successCount = 0;
+            var sw = Stopwatch.StartNew();
+            for (int i = 0; i < ITERATIONS; i++)
+            {
+                var result = _query.FindPathAStarOnly(testCases[i].start, testCases[i].end);
+                if (result.Success) successCount++;
+            }
+            sw.Stop();
+            double astarMs = sw.Elapsed.TotalMilliseconds;
+
+            // 전체 FindPath 벤치마크 (A* + Funnel)
+            sw.Restart();
+            for (int i = 0; i < ITERATIONS; i++)
+            {
+                var result = _query.FindPath(testCases[i].start, testCases[i].end);
+            }
+            sw.Stop();
+            double fullMs = sw.Elapsed.TotalMilliseconds;
+
+            Debug.Log($"[PureBenchmark] {successCount}/{ITERATIONS} succeeded\n" +
+                $"  A* only:    {astarMs:F2}ms (avg: {astarMs/ITERATIONS:F4}ms/path)\n" +
+                $"  Full path:  {fullMs:F2}ms (avg: {fullMs/ITERATIONS:F4}ms/path)");
+        }
+
+        /// <summary>
+        /// A* + Funnel 분리 측정
+        /// </summary>
+        [ContextMenu("A* + Funnel Breakdown (1000)")]
+        public void AStarFunnelBreakdown()
+        {
+            if (_query == null)
+            {
+                Debug.LogError("[NavMesh2DDemo] NavMesh not built!");
+                return;
+            }
+
+            const int ITERATIONS = 1000;
+            var random = new System.Random(42);
+
+            Fixed64 minX = (Fixed64)_boundaryMin.x;
+            Fixed64 minY = (Fixed64)_boundaryMin.y;
+            Fixed64 rangeX = (Fixed64)_boundaryMax.x - minX;
+            Fixed64 rangeY = (Fixed64)_boundaryMax.y - minY;
+
+            long totalAStar = 0, totalFunnel = 0;
+            int successCount = 0;
+
+            for (int i = 0; i < ITERATIONS; i++)
+            {
+                Fixed64 startX = minX + (Fixed64)random.NextDouble() * rangeX;
+                Fixed64 startY = minY + (Fixed64)random.NextDouble() * rangeY;
+                Fixed64 endX = minX + (Fixed64)random.NextDouble() * rangeX;
+                Fixed64 endY = minY + (Fixed64)random.NextDouble() * rangeY;
+
+                var start = new Vector2Fixed(startX, startY);
+                var end = new Vector2Fixed(endX, endY);
+
+                int startTri = _navMesh.FindTriangleContainingPoint(start);
+                int endTri = _navMesh.FindTriangleContainingPoint(end);
+
+                if (startTri < 0)
+                    start = _query.ClampToNavMesh(start);
+                if (endTri < 0)
+                    end = _query.ClampToNavMesh(end);
+
+                var result = _query.FindPath(start, end);
+
+                if (result.Success)
+                {
+                    successCount++;
+                    totalAStar += result.TicksAStar;
+                    totalFunnel += result.TicksFunnel;
+                }
+            }
+
+            double freq = Stopwatch.Frequency / 1000.0;
+            double astarMs = totalAStar / freq;
+            double funnelMs = totalFunnel / freq;
+            double totalMs = astarMs + funnelMs;
+
+            Debug.Log($"[A*+Funnel] {successCount}/{ITERATIONS} succeeded\n" +
+                $"  A*:     {astarMs:F2}ms ({astarMs/totalMs*100:F1}%) avg: {astarMs/successCount:F4}ms\n" +
+                $"  Funnel: {funnelMs:F2}ms ({funnelMs/totalMs*100:F1}%) avg: {funnelMs/successCount:F4}ms\n" +
+                $"  Total:  {totalMs:F2}ms avg: {totalMs/successCount:F4}ms");
         }
 
         // 버텍스 스냅 허용 거리 (이 거리 이내의 정점은 같은 정점으로 통합)

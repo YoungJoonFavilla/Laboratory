@@ -56,6 +56,7 @@ namespace NavMesh2D.Pathfinding
             _navMesh = navMesh;
             int triCount = navMesh.TriangleCount;
 
+            _openSet = new IndexedMinHeap(triCount);
             _gScore = new long[triCount];
             _cameFrom = new int[triCount];
             _lastEntryEdge = new int[triCount];  // -1 = start point, 0-2 = entry edge
@@ -63,7 +64,7 @@ namespace NavMesh2D.Pathfinding
             _inClosedSet = new int[triCount];
         }
 
-        private readonly IndexedMinHeap _openSet = new IndexedMinHeap();
+        private IndexedMinHeap _openSet;
         private readonly List<int> _pathBuffer = new List<int>();
 
         private int _generation = 0;
@@ -120,7 +121,7 @@ namespace NavMesh2D.Pathfinding
             int exploredCount = 0;
 
             t0 = Stopwatch.GetTimestamp();
-            long hStartRaw = DistanceRaw(startX, startY, endX, endY);
+            long hStartRaw = ChebyshevRaw(startX, startY, endX, endY);
             t1 = Stopwatch.GetTimestamp();
             ticksHeuristic += (t1 - t0);
 
@@ -202,7 +203,7 @@ namespace NavMesh2D.Pathfinding
                         _lastEntryEdge[neighbor] = _navMesh.GetNeighborEntryEdge(currentTri, exitEdge);
                         _nodeGeneration[neighbor] = _generation;
 
-                        // 휴리스틱
+                        // 휴리스틱 (Chebyshev - sqrt 없음)
                         t0 = Stopwatch.GetTimestamp();
                         long hRaw;
                         if (neighbor == endTri)
@@ -212,7 +213,7 @@ namespace NavMesh2D.Pathfinding
                         else
                         {
                             _navMesh.GetEdgeCenterRaw(currentTri, exitEdge, out long ecX, out long ecY);
-                            hRaw = DistanceRaw(ecX, ecY, endX, endY);
+                            hRaw = ChebyshevRaw(ecX, ecY, endX, endY);
                         }
                         t1 = Stopwatch.GetTimestamp();
                         ticksHeuristic += (t1 - t0);
@@ -250,6 +251,19 @@ namespace NavMesh2D.Pathfinding
             long dy = y2 - y1;
             long sqrDistRaw = MulRaw(dx, dx) + MulRaw(dy, dy);
             return SqrtRaw(sqrDistRaw);
+        }
+
+        /// <summary>
+        /// Chebyshev 거리 (sqrt 없음) - 휴리스틱용
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private long ChebyshevRaw(long x1, long y1, long x2, long y2)
+        {
+            long dx = x2 - x1;
+            long dy = y2 - y1;
+            if (dx < 0) dx = -dx;
+            if (dy < 0) dy = -dy;
+            return (dx > dy) ? dx : dy;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
