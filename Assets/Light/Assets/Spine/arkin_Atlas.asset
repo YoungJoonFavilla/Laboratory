@@ -1,0 +1,22 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a6b194f808b1af6499c93410e504af42, type: 3}
+  m_Name: arkin_Atlas
+  m_EditorClassIdentifier: spine-unity::Spine.Unity.SpineAtlasAsset
+  textureLoadingMode: 0
+  onDemandTextureLoader: {fileID: 0}
+  atlasFile: {fileID: 4900000, guid: 35631bb34caa33c428c7f154d972fb48, type: 3}
+  materials:
+  - {fileID: 2100000, guid: 51b8f27d463421945870af86d28d1fb7, type: 2}
+  - {fileID: 2100000, guid: 3a58c323258552e42b4d170cfa1c42f3, type: 2}
+  - {fileID: 2100000, guid: 7fc47490b3081254485ddb9f1acf94c5, type: 2}
+  - {fileID: 2100000, guid: 8efb9945bd11e404ab9f768acaf8c2ab, type: 2}
