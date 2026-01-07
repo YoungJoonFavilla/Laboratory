@@ -114,7 +114,7 @@ Shader "Custom/WallStencilDepthTex"
             ENDHLSL
         }
 
-        // Pass 2: 텍스처 렌더링
+        // Pass 2: 텍스처 렌더링 (2D 라이팅 지원)
         Pass
         {
             Name "WallRender"
@@ -128,7 +128,13 @@ Shader "Custom/WallStencilDepthTex"
             #pragma vertex vert
             #pragma fragment frag
 
+            #pragma multi_compile USE_SHAPE_LIGHT_TYPE_0 __
+            #pragma multi_compile USE_SHAPE_LIGHT_TYPE_1 __
+            #pragma multi_compile USE_SHAPE_LIGHT_TYPE_2 __
+            #pragma multi_compile USE_SHAPE_LIGHT_TYPE_3 __
+
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/Shaders/2D/Include/LightingUtility.hlsl"
 
             struct Attributes
             {
@@ -144,6 +150,7 @@ Shader "Custom/WallStencilDepthTex"
                 float4 color : COLOR;
                 float3 worldPos : TEXCOORD1;
                 float4 screenPos : TEXCOORD2;
+                half2 lightingUV : TEXCOORD3;
             };
 
             TEXTURE2D(_MainTex);
@@ -151,11 +158,25 @@ Shader "Custom/WallStencilDepthTex"
             SAMPLER(sampler_MainTex);
             SAMPLER(sampler_UnitDepthTex);
 
+            #if USE_SHAPE_LIGHT_TYPE_0
+            SHAPE_LIGHT(0)
+            #endif
+            #if USE_SHAPE_LIGHT_TYPE_1
+            SHAPE_LIGHT(1)
+            #endif
+            #if USE_SHAPE_LIGHT_TYPE_2
+            SHAPE_LIGHT(2)
+            #endif
+            #if USE_SHAPE_LIGHT_TYPE_3
+            SHAPE_LIGHT(3)
+            #endif
+
             float4 _Color;
             float4 _WallBasePos;
             float4 _WallDepthDir;
             float _DepthBias;
             float _DebugShowDepth;
+            half _HDREmulationScale;
 
             Varyings vert(Attributes v)
             {
@@ -166,6 +187,7 @@ Shader "Custom/WallStencilDepthTex"
                 o.uv = v.uv;
                 o.color = v.color;
                 o.screenPos = ComputeScreenPos(o.positionHCS);
+                o.lightingUV = half2(ComputeScreenPos(o.positionHCS / o.positionHCS.w).xy);
                 return o;
             }
 
@@ -177,10 +199,11 @@ Shader "Custom/WallStencilDepthTex"
                 if (col.a < 0.01)
                     discard;
 
+                float2 screenUV = i.screenPos.xy / i.screenPos.w;
+
                 // 디버그: 깊이 비교 시각화
                 if (_DebugShowDepth > 0.5)
                 {
-                    float2 screenUV = i.screenPos.xy / i.screenPos.w;
                     float2 unitPos = SAMPLE_TEXTURE2D(_UnitDepthTex, sampler_UnitDepthTex, screenUV).rg;
 
                     // 유닛이 없는 영역은 파란색
@@ -199,6 +222,38 @@ Shader "Custom/WallStencilDepthTex"
                     else
                         return half4(1, 0, 0, 1);
                 }
+
+                // 2D 라이팅 적용
+                half4 finalModulate = half4(1, 1, 1, 1);
+                half4 finalAdditive = half4(0, 0, 0, 0);
+
+                #if USE_SHAPE_LIGHT_TYPE_0
+                half4 shapeLight0 = SAMPLE_TEXTURE2D(_ShapeLightTexture0, sampler_ShapeLightTexture0, i.lightingUV);
+                finalModulate += shapeLight0 * _ShapeLightBlendFactors0.x;
+                finalAdditive += shapeLight0 * _ShapeLightBlendFactors0.y;
+                #endif
+
+                #if USE_SHAPE_LIGHT_TYPE_1
+                half4 shapeLight1 = SAMPLE_TEXTURE2D(_ShapeLightTexture1, sampler_ShapeLightTexture1, i.lightingUV);
+                finalModulate += shapeLight1 * _ShapeLightBlendFactors1.x;
+                finalAdditive += shapeLight1 * _ShapeLightBlendFactors1.y;
+                #endif
+
+                #if USE_SHAPE_LIGHT_TYPE_2
+                half4 shapeLight2 = SAMPLE_TEXTURE2D(_ShapeLightTexture2, sampler_ShapeLightTexture2, i.lightingUV);
+                finalModulate += shapeLight2 * _ShapeLightBlendFactors2.x;
+                finalAdditive += shapeLight2 * _ShapeLightBlendFactors2.y;
+                #endif
+
+                #if USE_SHAPE_LIGHT_TYPE_3
+                half4 shapeLight3 = SAMPLE_TEXTURE2D(_ShapeLightTexture3, sampler_ShapeLightTexture3, i.lightingUV);
+                finalModulate += shapeLight3 * _ShapeLightBlendFactors3.x;
+                finalAdditive += shapeLight3 * _ShapeLightBlendFactors3.y;
+                #endif
+
+                #if USE_SHAPE_LIGHT_TYPE_0 || USE_SHAPE_LIGHT_TYPE_1 || USE_SHAPE_LIGHT_TYPE_2 || USE_SHAPE_LIGHT_TYPE_3
+                col.rgb = _HDREmulationScale * (col.rgb * finalModulate.rgb + finalAdditive.rgb);
+                #endif
 
                 return col;
             }
