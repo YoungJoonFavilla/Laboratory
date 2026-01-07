@@ -24,8 +24,9 @@ MonoBehaviour:
     probeSamplingDebugMesh: {fileID: 0}
     probeSamplingDebugTexture: {fileID: 0}
     probeVolumeBlendStatesCS: {fileID: 0}
-  m_RendererFeatures: []
-  m_RendererFeatureMap: 
+  m_RendererFeatures:
+  - {fileID: 3833539702256494995}
+  m_RendererFeatureMap: 93e95a590c783335
   m_UseNativeRenderPass: 0
   m_LayerMask:
     serializedVersion: 2
@@ -56,3 +57,29 @@ MonoBehaviour:
   m_PostProcessData: {fileID: 11400000, guid: 41439944d30ece34e96484bdb6645b55, type: 2}
   m_DefaultMaterialType: 0
   m_DefaultCustomMaterial: {fileID: 2100000, guid: a97c105638bdf8b4a8650670310a4cd3, type: 2}
+--- !u!114 &3833539702256494995
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0969e06ffc2f8a24e87e8abd2bd2aabd, type: 3}
+  m_Name: OcclusionRenderFeature
+  m_EditorClassIdentifier: Assembly-CSharp::OcclusionRenderFeature
+  m_Active: 1
+  settings:
+    unitDepthPassEvent: 250
+    wallStencilPassEvent: 250
+    unitOccludedPassEvent: 500
+    unitLayer:
+      serializedVersion: 2
+      m_Bits: 128
+    wallLayer:
+      serializedVersion: 2
+      m_Bits: 64
+    projectionAngle: 129.5
+    minDepth: 0
+    maxDepth: 20

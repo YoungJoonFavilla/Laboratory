@@ -1,53 +1,80 @@
 using UnityEngine;
 
-[ExecuteAlways]
 [RequireComponent(typeof(SpriteRenderer))]
 public class WallOccluder : MonoBehaviour
 {
+    [Header("Normal Vector")]
+    [Tooltip("법선벡터 각도 (이 방향 = 벽 뒤, 유닛이 가려지는 방향)")]
+    [SerializeField] private float _normalAngle = OccConstant.DEFAULT_NORMAL_ANGLE;
+
+    [Header("Base Position")]
+    [Tooltip("체크 해제시 transform.position 사용")]
+    [SerializeField] private bool _useCustomBasePos = false;
+    [SerializeField] private Vector2 _customBasePos = Vector2.zero;
+
     [Header("Depth Settings")]
-    [SerializeField] private float _projectionAngle = 129.5f;
-
     [Tooltip("양수 = 벽이 뒤로 밀림 (덜 가림), 음수 = 벽이 앞으로 옴 (더 가림)")]
-    [SerializeField] private float _depthOffset = 0f;
+    [SerializeField] private float _depthBias = 0.5f;
 
-    private SpriteRenderer _renderer;
-    private MaterialPropertyBlock _propBlock;
+    private static readonly int WallBasePosId = Shader.PropertyToID("_WallBasePos");
+    private static readonly int WallDepthDirId = Shader.PropertyToID("_WallDepthDir");
+    private static readonly int DepthBiasId = Shader.PropertyToID("_DepthBias");
 
-    private static readonly int DepthDirId = Shader.PropertyToID("_DepthDir");
-    private static readonly int DepthOffsetId = Shader.PropertyToID("_DepthOffset");
+    public Vector2 BasePos => _useCustomBasePos ? _customBasePos : (Vector2)transform.position;
 
-    public Vector2 DepthDir
+    private void Awake()
     {
-        get
+        ApplySettings();
+    }
+
+    private void ApplySettings()
+    {
+        var renderer = GetComponent<SpriteRenderer>();
+        if (renderer == null) return;
+
+        var mpb = new MaterialPropertyBlock();
+        renderer.GetPropertyBlock(mpb);
+
+        Vector2 basePos = BasePos;
+        // 법선벡터 = 벽 뒤 방향 = depth 증가 방향 (그대로 사용)
+        float rad = _normalAngle * Mathf.Deg2Rad;
+        Vector2 depthDir = new Vector2(Mathf.Cos(rad), Mathf.Sin(rad));
+
+        mpb.SetVector(WallBasePosId, new Vector4(basePos.x, basePos.y, 0, 0));
+        mpb.SetVector(WallDepthDirId, new Vector4(depthDir.x, depthDir.y, 0, 0));
+        mpb.SetFloat(DepthBiasId, _depthBias);
+
+        renderer.SetPropertyBlock(mpb);
+    }
+
+#if UNITY_EDITOR
+    private void OnValidate()
+    {
+        if (gameObject.activeInHierarchy)
         {
-            float rad = _projectionAngle * Mathf.Deg2Rad;
-            return new Vector2(Mathf.Cos(rad), Mathf.Sin(rad)).normalized;
+            ApplySettings();
         }
-    }
-
-    private void OnEnable()
-    {
-        _renderer = GetComponent<SpriteRenderer>();
-        _propBlock = new MaterialPropertyBlock();
-    }
-
-    private void Update()
-    {
-        if (_renderer == null) return;
-
-        _renderer.GetPropertyBlock(_propBlock);
-        _propBlock.SetVector(DepthDirId, DepthDir);
-        _propBlock.SetFloat(DepthOffsetId, _depthOffset);
-        _renderer.SetPropertyBlock(_propBlock);
     }
 
     private void OnDrawGizmosSelected()
     {
-        Vector3 pos = transform.position;
+        float rad = _normalAngle * Mathf.Deg2Rad;
+        Vector2 normalDir = new Vector2(Mathf.Cos(rad), Mathf.Sin(rad));
 
-        // 투영 방향 표시
-        Gizmos.color = Color.blue;
-        Gizmos.DrawLine(pos, pos + (Vector3)(DepthDir * 2f));
-        Gizmos.DrawWireSphere(pos, 0.2f);
+        Vector3 basePos = BasePos;
+
+        // Base Position 표시
+        Gizmos.color = Color.yellow;
+        Gizmos.DrawWireSphere(basePos, 0.2f);
+
+        // 법선벡터 방향 표시 (벽 뒤 = 오클루전 방향)
+        Gizmos.color = Color.cyan;
+        Gizmos.DrawLine(basePos, basePos + (Vector3)(normalDir * 2f));
+
+        // 벽 표면 라인 표시 (법선에 수직)
+        Gizmos.color = Color.green;
+        Vector2 tangent = new Vector2(-normalDir.y, normalDir.x);
+        Gizmos.DrawLine(basePos - (Vector3)(tangent * 1.5f), basePos + (Vector3)(tangent * 1.5f));
     }
+#endif
 }

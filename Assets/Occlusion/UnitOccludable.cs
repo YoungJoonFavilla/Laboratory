@@ -3,9 +3,6 @@ using UnityEngine;
 [ExecuteAlways]
 public class UnitOccludable : MonoBehaviour
 {
-    [Header("Depth Settings")]
-    [SerializeField] private float _projectionAngle = 129.5f;
-
     [Tooltip("음수 = 유닛이 앞으로 옴 (덜 가려짐), 양수 = 유닛이 뒤로 밀림 (더 가려짐)")]
     [SerializeField] private float _depthOffset = 0f;
 
@@ -15,7 +12,7 @@ public class UnitOccludable : MonoBehaviour
     {
         get
         {
-            float rad = _projectionAngle * Mathf.Deg2Rad;
+            float rad = OccConstant.DEFAULT_NORMAL_ANGLE * Mathf.Deg2Rad;
             return new Vector2(Mathf.Cos(rad), Mathf.Sin(rad)).normalized;
         }
     }

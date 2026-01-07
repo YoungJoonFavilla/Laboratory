@@ -7,8 +7,8 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: UnitOcclude
-  m_Shader: {fileID: 4800000, guid: fe4e17fb71f89b54f8fff69ee50b33da, type: 3}
+  m_Name: WallStencilDepthTex
+  m_Shader: {fileID: 4800000, guid: 35f25accffc0fe841bfd5979f17ccdff, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords: []
@@ -27,6 +27,10 @@ Material:
         m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
+    - _DepthMap:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
     - _MainTex:
         m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
@@ -41,13 +45,18 @@ Material:
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
+    - _DebugAlwaysOcclude: 0
+    - _DebugShowDepth: 0
+    - _DepthBias: 0
+    - _DepthOffset: 0
+    - _DepthRange: 11.14
     - _EnableExternalAlpha: 0
-    - _OccludedAlpha: 0.3
-    - _WallBaseDepth: 0
+    - _WallBaseY: 16.6
     - _ZWrite: 0
     m_Colors:
     - _Color: {r: 1, g: 1, b: 1, a: 1}
-    - _DepthDir: {r: 0, g: -1, b: 0, a: 0}
     - _RendererColor: {r: 1, g: 1, b: 1, a: 1}
+    - _WallBasePos: {r: -15.66, g: 11.98, b: 0, a: 0}
+    - _WallDepthDir: {r: 0, g: 1, b: 0, a: 0}
   m_BuildTextureStacks: []
   m_AllowLocking: 1
