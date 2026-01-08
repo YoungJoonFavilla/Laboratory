@@ -3,6 +3,7 @@ Shader "Custom/WallStencilDepthTex"
     Properties
     {
         _MainTex("Texture", 2D) = "white" {}
+        _MaskTex("Mask", 2D) = "white" {}
         _Color("Color", Color) = (1,1,1,1)
         [HideInInspector] _WallBasePos("Wall Base Position (X, Y)", Vector) = (0, 0, 0, 0)
         [HideInInspector] _WallDepthDir("Wall Depth Direction", Vector) = (0, 1, 0, 0)
@@ -114,7 +115,7 @@ Shader "Custom/WallStencilDepthTex"
             ENDHLSL
         }
 
-        // Pass 2: 텍스처 렌더링
+        // Pass 2: 텍스처 렌더링 (2D Lit)
         Pass
         {
             Name "WallRender"
@@ -129,6 +130,10 @@ Shader "Custom/WallStencilDepthTex"
             #pragma fragment frag
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/Shaders/2D/Include/SurfaceData2D.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/Shaders/2D/Include/InputData2D.hlsl"
+            #include_with_pragmas "Packages/com.unity.render-pipelines.universal/Shaders/2D/Include/ShapeLightShared.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/Shaders/2D/Include/CombinedShapeLightShared.hlsl"
 
             struct Attributes
             {
@@ -139,16 +144,19 @@ Shader "Custom/WallStencilDepthTex"
 
             struct Varyings
             {
-                float4 positionHCS : SV_POSITION;
+                float4 positionCS : SV_POSITION;
                 float2 uv : TEXCOORD0;
+                half2 lightingUV : TEXCOORD1;
                 float4 color : COLOR;
-                float3 worldPos : TEXCOORD1;
-                float4 screenPos : TEXCOORD2;
+                float3 worldPos : TEXCOORD2;
+                float4 screenPos : TEXCOORD3;
             };
 
             TEXTURE2D(_MainTex);
+            TEXTURE2D(_MaskTex);
             TEXTURE2D(_UnitDepthTex);
             SAMPLER(sampler_MainTex);
+            SAMPLER(sampler_MaskTex);
             SAMPLER(sampler_UnitDepthTex);
 
             float4 _Color;
@@ -159,22 +167,24 @@ Shader "Custom/WallStencilDepthTex"
 
             Varyings vert(Attributes v)
             {
-                Varyings o;
+                Varyings o = (Varyings)0;
                 VertexPositionInputs pos = GetVertexPositionInputs(v.positionOS.xyz);
-                o.positionHCS = pos.positionCS;
+                o.positionCS = pos.positionCS;
                 o.worldPos = pos.positionWS;
                 o.uv = v.uv;
-                o.color = v.color;
-                o.screenPos = ComputeScreenPos(o.positionHCS);
+                o.lightingUV = half2(ComputeScreenPos(o.positionCS / o.positionCS.w).xy);
+                o.color = v.color * _Color;
+                o.screenPos = ComputeScreenPos(o.positionCS);
                 return o;
             }
 
             half4 frag(Varyings i) : SV_Target
             {
                 half4 tex = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, i.uv);
-                half4 col = tex * i.color * _Color;
+                half4 mask = SAMPLE_TEXTURE2D(_MaskTex, sampler_MaskTex, i.uv);
+                half4 main = tex * i.color;
 
-                if (col.a < 0.01)
+                if (main.a < 0.01)
                     discard;
 
                 // 디버그: 깊이 비교 시각화
@@ -200,7 +210,14 @@ Shader "Custom/WallStencilDepthTex"
                         return half4(1, 0, 0, 1);
                 }
 
-                return col;
+                // 2D 라이팅 적용
+                SurfaceData2D surfaceData;
+                InputData2D inputData;
+
+                InitializeSurfaceData(main.rgb, main.a, mask, surfaceData);
+                InitializeInputData(i.uv, i.lightingUV, inputData);
+
+                return CombinedShapeLightShared(surfaceData, inputData);
             }
             ENDHLSL
         }
