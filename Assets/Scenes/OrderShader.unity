@@ -689,7 +689,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WallOccluder
   _normalAngle: 129.5
   _useCustomBasePos: 1
-  _customBasePos: {x: -18.753092, y: 12.28698}
+  _localOffset: {x: 0, y: 0}
   _depthBias: 0.5
 --- !u!1 &419364667
 GameObject:
@@ -1015,9 +1015,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b5c28bcab691a3545a5918352b3f56dd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WallOccluder
-  _normalAngle: 129.5
-  _useCustomBasePos: 0
-  _customBasePos: {x: 0, y: 0}
+  _normalAngle: 90
+  _useCustomBasePos: 1
+  _localOffset: {x: 1.8126945, y: 1.3595202}
   _depthBias: 0.5
 --- !u!212 &825790317
 SpriteRenderer:
@@ -1124,7 +1124,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WallOccluder
   _normalAngle: 129.5
   _useCustomBasePos: 0
-  _customBasePos: {x: 0, y: 0}
+  _localOffset: {x: 0, y: 0}
   _depthBias: 0.5
 --- !u!212 &898837951
 SpriteRenderer:
@@ -1289,7 +1289,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WallOccluder
   _normalAngle: 129.5
   _useCustomBasePos: 0
-  _customBasePos: {x: 0, y: 0}
+  _localOffset: {x: 0, y: 0}
   _depthBias: 0.5
 --- !u!1 &952828157
 GameObject:
@@ -1338,7 +1338,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WallOccluder
   _normalAngle: 129.5
   _useCustomBasePos: 1
-  _customBasePos: {x: -20.43751, y: -6.443088}
+  _localOffset: {x: 0, y: 0}
   _depthBias: 0.5
 --- !u!212 &952828160
 SpriteRenderer:
@@ -1445,7 +1445,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WallOccluder
   _normalAngle: 129.5
   _useCustomBasePos: 0
-  _customBasePos: {x: 0, y: 0}
+  _localOffset: {x: 0, y: 0}
   _depthBias: 0.5
 --- !u!212 &961106148
 SpriteRenderer:
@@ -1610,7 +1610,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WallOccluder
   _normalAngle: 129.5
   _useCustomBasePos: 0
-  _customBasePos: {x: 0, y: 0}
+  _localOffset: {x: 0, y: 0}
   _depthBias: 0.5
 --- !u!1 &1123635228
 GameObject:
@@ -1659,7 +1659,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WallOccluder
   _normalAngle: 88.77
   _useCustomBasePos: 1
-  _customBasePos: {x: -16.662466, y: -5.851363}
+  _localOffset: {x: 0, y: 0}
   _depthBias: 0.5
 --- !u!212 &1123635231
 SpriteRenderer:
@@ -1766,7 +1766,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WallOccluder
   _normalAngle: 129.5
   _useCustomBasePos: 0
-  _customBasePos: {x: 0, y: 0}
+  _localOffset: {x: 0, y: 0}
   _depthBias: 0.5
 --- !u!212 &1124430707
 SpriteRenderer:
@@ -2044,7 +2044,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WallOccluder
   _normalAngle: 129.5
   _useCustomBasePos: 0
-  _customBasePos: {x: 0, y: 0}
+  _localOffset: {x: 0, y: 0}
   _depthBias: 0.5
 --- !u!1 &1198906636
 GameObject:
@@ -2093,7 +2093,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WallOccluder
   _normalAngle: 129.5
   _useCustomBasePos: 0
-  _customBasePos: {x: 0, y: 0}
+  _localOffset: {x: 0, y: 0}
   _depthBias: 0.5
 --- !u!212 &1198906639
 SpriteRenderer:
@@ -2258,7 +2258,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WallOccluder
   _normalAngle: 129.5
   _useCustomBasePos: 0
-  _customBasePos: {x: 0, y: 0}
+  _localOffset: {x: 0, y: 0}
   _depthBias: 0.5
 --- !u!1 &1298928545
 GameObject:
@@ -2307,7 +2307,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WallOccluder
   _normalAngle: 129.5
   _useCustomBasePos: 0
-  _customBasePos: {x: 0, y: 0}
+  _localOffset: {x: 0, y: 0}
   _depthBias: 0.5
 --- !u!212 &1298928548
 SpriteRenderer:
@@ -2541,7 +2541,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WallOccluder
   _normalAngle: 129.5
   _useCustomBasePos: 1
-  _customBasePos: {x: -22.43438, y: -0.5054076}
+  _localOffset: {x: 0, y: 0}
   _depthBias: 0.5
 --- !u!212 &1346201468
 SpriteRenderer:
@@ -2648,7 +2648,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WallOccluder
   _normalAngle: 129.5
   _useCustomBasePos: 0
-  _customBasePos: {x: 0, y: 0}
+  _localOffset: {x: 0, y: 0}
   _depthBias: 0.5
 --- !u!212 &1576695915
 SpriteRenderer:

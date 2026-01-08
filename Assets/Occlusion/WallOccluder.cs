@@ -8,9 +8,9 @@ public class WallOccluder : MonoBehaviour
     [SerializeField] private float _normalAngle = OccConstant.DEFAULT_NORMAL_ANGLE;
 
     [Header("Base Position")]
-    [Tooltip("체크 해제시 transform.position 사용")]
+    [Tooltip("체크시 로컬 오프셋 사용, 해제시 transform.position 그대로")]
     [SerializeField] private bool _useCustomBasePos = false;
-    [SerializeField] private Vector2 _customBasePos = Vector2.zero;
+    [SerializeField] private Vector2 _localOffset = Vector2.zero;
 
     [Header("Depth Settings")]
     [Tooltip("양수 = 벽이 뒤로 밀림 (덜 가림), 음수 = 벽이 앞으로 옴 (더 가림)")]
@@ -20,7 +20,9 @@ public class WallOccluder : MonoBehaviour
     private static readonly int WallDepthDirId = Shader.PropertyToID("_WallDepthDir");
     private static readonly int DepthBiasId = Shader.PropertyToID("_DepthBias");
 
-    public Vector2 BasePos => _useCustomBasePos ? _customBasePos : (Vector2)transform.position;
+    public Vector2 BasePos => _useCustomBasePos
+        ? (Vector2)transform.TransformPoint(_localOffset)
+        : (Vector2)transform.position;
 
     private void Awake()
     {

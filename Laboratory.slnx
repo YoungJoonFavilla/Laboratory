@@ -1,0 +1,9 @@
+﻿<Solution>
+  <Project Path="NavMesh2D.Runtime.csproj" />
+  <Project Path="FixedMathSharp.Runtime.csproj" />
+  <Project Path="Assembly-CSharp-Editor.csproj" />
+  <Project Path="Assembly-CSharp.csproj" />
+  <Project Path="FixedMathSharp.Editor.csproj" />
+  <Project Path="NavMesh2D.Demo.csproj" />
+  <Project Path="NavMesh2D.Editor.csproj" />
+</Solution>
