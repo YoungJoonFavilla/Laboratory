@@ -422,22 +422,22 @@ public class Code : MonoBehaviour
             }
         }
 
-        // Class 인스턴스들의 메모리 주소 확인 (처음 10개만)
-        UnityEngine.Debug.Log("=== Class 인스턴스의 실제 힙 메모리 주소 ===");
-        for (int i = 0; i < 10; i++)
-        {
-            object obj = classArray[i];
-            long address = Unsafe.As<object, IntPtr>(ref obj).ToInt64();
-            UnityEngine.Debug.Log($"classArray[{i}] 실제 객체 주소: 0x{address:X16}");
-        }
+        // Class 인스턴스들의 메모리 주소 확인 - Unity 6.3에서 Unsafe 미지원으로 비활성화
+        // UnityEngine.Debug.Log("=== Class 인스턴스의 실제 힙 메모리 주소 ===");
+        // for (int i = 0; i < 10; i++)
+        // {
+        //     object obj = classArray[i];
+        //     long address = Unsafe.As<object, IntPtr>(ref obj).ToInt64();
+        //     UnityEngine.Debug.Log($"classArray[{i}] 실제 객체 주소: 0x{address:X16}");
+        // }
 
-        // 실제 객체들 간의 주소 차이 확인
-        object obj0 = classArray[0];
-        object obj1 = classArray[1];
-        long addr0 = Unsafe.As<object, IntPtr>(ref obj0).ToInt64();
-        long addr1 = Unsafe.As<object, IntPtr>(ref obj1).ToInt64();
-        long classDiff = Math.Abs(addr1 - addr0);
-        UnityEngine.Debug.Log($"실제 객체 간 주소 차이: {classDiff} bytes (힙에 불규칙하게 배치)");
+        // 실제 객체들 간의 주소 차이 확인 - Unity 6.3에서 Unsafe 미지원으로 비활성화
+        // object obj0 = classArray[0];
+        // object obj1 = classArray[1];
+        // long addr0 = Unsafe.As<object, IntPtr>(ref obj0).ToInt64();
+        // long addr1 = Unsafe.As<object, IntPtr>(ref obj1).ToInt64();
+        // long classDiff = Math.Abs(addr1 - addr0);
+        // UnityEngine.Debug.Log($"실제 객체 간 주소 차이: {classDiff} bytes (힙에 불규칙하게 배치)");
 
         // Class 연산만 측정
         Stopwatch classStopwatch = Stopwatch.StartNew();

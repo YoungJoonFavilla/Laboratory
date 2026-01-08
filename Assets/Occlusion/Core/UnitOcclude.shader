@@ -3,6 +3,7 @@ Shader "Custom/UnitOcclude"
     Properties
     {
         _MainTex("Texture", 2D) = "white" {}
+        _MaskTex("Mask", 2D) = "white" {}
         _Color("Color", Color) = (1,1,1,1)
         _OccludedAlpha("Occluded Alpha", Range(0,1)) = 0.3
     }
@@ -70,7 +71,7 @@ Shader "Custom/UnitOcclude"
             ENDHLSL
         }
 
-        // Pass 1: 정상 영역 렌더링
+        // Pass 1: 정상 영역 렌더링 (2D Lit)
         Pass
         {
             Name "UnitRender"
@@ -93,6 +94,10 @@ Shader "Custom/UnitOcclude"
             #pragma fragment frag
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/Shaders/2D/Include/SurfaceData2D.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/Shaders/2D/Include/InputData2D.hlsl"
+            #include_with_pragmas "Packages/com.unity.render-pipelines.universal/Shaders/2D/Include/ShapeLightShared.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/Shaders/2D/Include/CombinedShapeLightShared.hlsl"
 
             struct Attributes
             {
@@ -103,40 +108,46 @@ Shader "Custom/UnitOcclude"
 
             struct Varyings
             {
-                float4 positionHCS : SV_POSITION;
+                float4 positionCS : SV_POSITION;
                 float2 uv : TEXCOORD0;
+                half2 lightingUV : TEXCOORD1;
                 float4 color : COLOR;
             };
 
             TEXTURE2D(_MainTex);
             SAMPLER(sampler_MainTex);
+            TEXTURE2D(_MaskTex);
+            SAMPLER(sampler_MaskTex);
             float4 _Color;
-            float _OccludedAlpha;
 
             Varyings vert(Attributes v)
             {
-                Varyings o;
-                VertexPositionInputs pos = GetVertexPositionInputs(v.positionOS.xyz);
-                o.positionHCS = pos.positionCS;
+                Varyings o = (Varyings)0;
+                o.positionCS = TransformObjectToHClip(v.positionOS.xyz);
                 o.uv = v.uv;
-                o.color = v.color;
+                o.lightingUV = half2(ComputeScreenPos(o.positionCS / o.positionCS.w).xy);
+                o.color = v.color * _Color;
                 return o;
             }
 
             half4 frag(Varyings i) : SV_Target
             {
                 half4 tex = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, i.uv);
-                half4 col = tex * i.color * _Color;
+                half4 mask = SAMPLE_TEXTURE2D(_MaskTex, sampler_MaskTex, i.uv);
+                half4 main = tex * i.color;
 
-                if (col.a < 0.01)
-                    discard;
+                SurfaceData2D surfaceData;
+                InputData2D inputData;
 
-                return col;
+                InitializeSurfaceData(main.rgb, main.a, mask, surfaceData);
+                InitializeInputData(i.uv, i.lightingUV, inputData);
+
+                return CombinedShapeLightShared(surfaceData, inputData);
             }
             ENDHLSL
         }
 
-        // Pass 2: 가려진 영역 - 반투명 렌더링
+        // Pass 2: 가려진 영역 - 반투명 렌더링 (2D Lit)
         Pass
         {
             Name "UnitOccluded"
@@ -159,6 +170,10 @@ Shader "Custom/UnitOcclude"
             #pragma fragment frag
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/Shaders/2D/Include/SurfaceData2D.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/Shaders/2D/Include/InputData2D.hlsl"
+            #include_with_pragmas "Packages/com.unity.render-pipelines.universal/Shaders/2D/Include/ShapeLightShared.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/Shaders/2D/Include/CombinedShapeLightShared.hlsl"
 
             struct Attributes
             {
@@ -169,36 +184,42 @@ Shader "Custom/UnitOcclude"
 
             struct Varyings
             {
-                float4 positionHCS : SV_POSITION;
+                float4 positionCS : SV_POSITION;
                 float2 uv : TEXCOORD0;
+                half2 lightingUV : TEXCOORD1;
                 float4 color : COLOR;
             };
 
             TEXTURE2D(_MainTex);
             SAMPLER(sampler_MainTex);
+            TEXTURE2D(_MaskTex);
+            SAMPLER(sampler_MaskTex);
             float4 _Color;
             float _OccludedAlpha;
 
             Varyings vert(Attributes v)
             {
-                Varyings o;
-                VertexPositionInputs pos = GetVertexPositionInputs(v.positionOS.xyz);
-                o.positionHCS = pos.positionCS;
+                Varyings o = (Varyings)0;
+                o.positionCS = TransformObjectToHClip(v.positionOS.xyz);
                 o.uv = v.uv;
-                o.color = v.color;
+                o.lightingUV = half2(ComputeScreenPos(o.positionCS / o.positionCS.w).xy);
+                o.color = v.color * _Color;
                 return o;
             }
 
             half4 frag(Varyings i) : SV_Target
             {
                 half4 tex = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, i.uv);
-                half4 col = tex * i.color * _Color;
+                half4 mask = SAMPLE_TEXTURE2D(_MaskTex, sampler_MaskTex, i.uv);
+                half4 main = tex * i.color;
 
-                if (col.a < 0.01)
-                    discard;
+                SurfaceData2D surfaceData;
+                InputData2D inputData;
 
-                col.a *= _OccludedAlpha;
-                return col;
+                InitializeSurfaceData(main.rgb, main.a * _OccludedAlpha, mask, surfaceData);
+                InitializeInputData(i.uv, i.lightingUV, inputData);
+
+                return CombinedShapeLightShared(surfaceData, inputData);
             }
             ENDHLSL
         }

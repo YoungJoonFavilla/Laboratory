@@ -7,14 +7,14 @@ public class WallOccluderEditor : Editor
 {
     private SerializedProperty _normalAngle;
     private SerializedProperty _useCustomBasePos;
-    private SerializedProperty _customBasePos;
+    private SerializedProperty _localOffset;
     private SerializedProperty _depthBias;
 
     private void OnEnable()
     {
         _normalAngle = serializedObject.FindProperty("_normalAngle");
         _useCustomBasePos = serializedObject.FindProperty("_useCustomBasePos");
-        _customBasePos = serializedObject.FindProperty("_customBasePos");
+        _localOffset = serializedObject.FindProperty("_localOffset");
         _depthBias = serializedObject.FindProperty("_depthBias");
     }
 
@@ -26,19 +26,18 @@ public class WallOccluderEditor : Editor
         EditorGUILayout.PropertyField(_normalAngle, new GUIContent("Normal Angle (°)"));
 
         EditorGUILayout.Space();
-        EditorGUILayout.PropertyField(_useCustomBasePos);
+        EditorGUILayout.PropertyField(_useCustomBasePos, new GUIContent("Use Local Offset"));
 
         if (!_useCustomBasePos.hasMultipleDifferentValues && _useCustomBasePos.boolValue)
         {
             EditorGUI.indentLevel++;
-            EditorGUILayout.PropertyField(_customBasePos);
+            EditorGUILayout.PropertyField(_localOffset, new GUIContent("Local Offset"));
 
             using (new EditorGUI.DisabledGroupScope(targets.Length > 1))
             {
-                if (GUILayout.Button("Set to Current Position"))
+                if (GUILayout.Button("Reset Offset"))
                 {
-                    var occluder = (WallOccluder)target;
-                    _customBasePos.vector2Value = occluder.transform.position;
+                    _localOffset.vector2Value = Vector2.zero;
                 }
             }
             EditorGUI.indentLevel--;
@@ -56,7 +55,7 @@ public class WallOccluderEditor : Editor
 
         var so = new SerializedObject(occluder);
         var useCustom = so.FindProperty("_useCustomBasePos");
-        var customPos = so.FindProperty("_customBasePos");
+        var localOffset = so.FindProperty("_localOffset");
         var angle = so.FindProperty("_normalAngle");
 
         // 법선벡터 방향 계산
@@ -64,8 +63,9 @@ public class WallOccluderEditor : Editor
         Vector2 normalDir = new Vector2(Mathf.Cos(rad), Mathf.Sin(rad));
         Vector2 tangent = new Vector2(-normalDir.y, normalDir.x);
 
+        // Base Position 계산 (로컬 오프셋 → 월드 좌표)
         Vector3 basePos = useCustom.boolValue
-            ? (Vector3)(Vector2)customPos.vector2Value
+            ? occluder.transform.TransformPoint(localOffset.vector2Value)
             : occluder.transform.position;
 
         // 법선벡터 표시 (벽 뒤 방향)
@@ -84,7 +84,7 @@ public class WallOccluderEditor : Editor
 
         // Base Position 드래그 핸들
         Handles.color = Color.yellow;
-        Vector3 newPos = Handles.FreeMoveHandle(
+        Vector3 newWorldPos = Handles.FreeMoveHandle(
             basePos,
             0.3f,
             Vector3.zero,
@@ -94,7 +94,9 @@ public class WallOccluderEditor : Editor
         if (EditorGUI.EndChangeCheck())
         {
             Undo.RecordObject(occluder, "Move Wall Base Position");
-            customPos.vector2Value = new Vector2(newPos.x, newPos.y);
+            // 월드 좌표 → 로컬 오프셋으로 변환
+            Vector3 newLocalPos = occluder.transform.InverseTransformPoint(newWorldPos);
+            localOffset.vector2Value = new Vector2(newLocalPos.x, newLocalPos.y);
             so.ApplyModifiedProperties();
         }
 
