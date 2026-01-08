@@ -80,6 +80,7 @@ MonoBehaviour:
     wallLayer:
       serializedVersion: 2
       m_Bits: 64
-    projectionAngle: 129.5
-    minDepth: 0
-    maxDepth: 20
+    outlinePassEvent: 500
+    outlineCompositeMaterial: {fileID: 2100000, guid: 54eb11bd97a9ebf4a8348a17b3fd1c48, type: 2}
+    outlineColor: {r: 1, g: 0.92, b: 0.016, a: 1}
+    outlineWidth: 3

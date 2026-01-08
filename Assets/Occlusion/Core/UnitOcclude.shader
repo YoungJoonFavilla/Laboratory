@@ -6,6 +6,7 @@ Shader "Custom/UnitOcclude"
         _MaskTex("Mask", 2D) = "white" {}
         _Color("Color", Color) = (1,1,1,1)
         _OccludedAlpha("Occluded Alpha", Range(0,1)) = 0.3
+        [HideInInspector] _OutlineSelected("Outline Selected", Float) = 0
     }
 
     SubShader
@@ -17,7 +18,68 @@ Shader "Custom/UnitOcclude"
             "RenderType"="Transparent"
         }
 
-        // Pass 0: 유닛 위치 텍스처에 XY 좌표 쓰기 (RenderFeature에서 호출)
+        // Pass 0: 실루엣 마스크 (Screen-Space Outline용)
+        Pass
+        {
+            Name "Silhouette"
+            Tags { "LightMode"="OutlineSilhouettePass" }
+
+            Blend Off
+            ZWrite Off
+            Cull Off
+
+            HLSLPROGRAM
+            #pragma vertex vertSilhouette
+            #pragma fragment fragSilhouette
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            struct Attributes
+            {
+                float4 positionOS : POSITION;
+                float2 uv : TEXCOORD0;
+                float4 color : COLOR;
+            };
+
+            struct Varyings
+            {
+                float4 positionCS : SV_POSITION;
+                float2 uv : TEXCOORD0;
+                float vertexAlpha : TEXCOORD1;
+            };
+
+            TEXTURE2D(_MainTex);
+            SAMPLER(sampler_MainTex);
+            float _OutlineSelected;
+
+            Varyings vertSilhouette(Attributes v)
+            {
+                Varyings o;
+                o.positionCS = TransformObjectToHClip(v.positionOS.xyz);
+                o.uv = v.uv;
+                o.vertexAlpha = v.color.a;
+                return o;
+            }
+
+            half4 fragSilhouette(Varyings i) : SV_Target
+            {
+                // 선택되지 않은 유닛은 렌더링하지 않음
+                if (_OutlineSelected < 0.5)
+                    discard;
+
+                half4 tex = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, i.uv);
+
+                // 투명 픽셀 무시
+                if (tex.a * i.vertexAlpha < 0.01)
+                    discard;
+
+                // 단색 흰색 출력 (실루엣)
+                return half4(1, 1, 1, 1);
+            }
+            ENDHLSL
+        }
+
+        // Pass 1: 유닛 위치 텍스처에 XY 좌표 쓰기 (RenderFeature에서 호출)
         Pass
         {
             Name "UnitDepthWrite"
@@ -71,7 +133,7 @@ Shader "Custom/UnitOcclude"
             ENDHLSL
         }
 
-        // Pass 1: 정상 영역 렌더링 (2D Lit)
+        // Pass 2: 정상 영역 렌더링 (2D Lit)
         Pass
         {
             Name "UnitRender"
@@ -147,7 +209,7 @@ Shader "Custom/UnitOcclude"
             ENDHLSL
         }
 
-        // Pass 2: 가려진 영역 - 반투명 렌더링 (2D Lit)
+        // Pass 3: 가려진 영역 - 반투명 렌더링 (2D Lit)
         Pass
         {
             Name "UnitOccluded"
