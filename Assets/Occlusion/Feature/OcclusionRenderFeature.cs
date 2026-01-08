@@ -1,5 +1,7 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.Rendering.RenderGraphModule;
 using UnityEngine.Rendering.Universal;
 
 public class OcclusionRenderFeature : ScriptableRendererFeature
@@ -19,12 +21,22 @@ public class OcclusionRenderFeature : ScriptableRendererFeature
         public float maxDepth = 50f;
     }
 
+    // 패스 간 데이터 공유를 위한 ContextItem
+    public class OcclusionFrameData : ContextItem
+    {
+        public TextureHandle unitDepthTexture;
+
+        public override void Reset()
+        {
+            unitDepthTexture = TextureHandle.nullHandle;
+        }
+    }
+
     public OcclusionSettings settings = new OcclusionSettings();
 
     private UnitDepthPass _unitDepthPass;
     private WallStencilPass _wallStencilPass;
     private UnitOccludedPass _unitOccludedPass;
-    private RTHandle _unitDepthRT;
 
     public override void Create()
     {
@@ -43,25 +55,9 @@ public class OcclusionRenderFeature : ScriptableRendererFeature
         if (renderingData.cameraData.cameraType != CameraType.Game)
             return;
 
-        // 유닛 위치 RT 생성/갱신 (XY 좌표 저장)
-        var desc = renderingData.cameraData.cameraTargetDescriptor;
-        desc.colorFormat = RenderTextureFormat.RGFloat;
-        desc.depthBufferBits = 0;
-
-        RenderingUtils.ReAllocateIfNeeded(ref _unitDepthRT, desc, FilterMode.Point, TextureWrapMode.Clamp, name: "_UnitDepthTex");
-
-        _unitDepthPass.Setup(_unitDepthRT);
-        _wallStencilPass.Setup(_unitDepthRT, renderer);
-        _unitOccludedPass.Setup(renderer);
-
         renderer.EnqueuePass(_unitDepthPass);
         renderer.EnqueuePass(_wallStencilPass);
         renderer.EnqueuePass(_unitOccludedPass);
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        _unitDepthRT?.Release();
     }
 
     // ============================================
@@ -70,52 +66,90 @@ public class OcclusionRenderFeature : ScriptableRendererFeature
     class UnitDepthPass : ScriptableRenderPass
     {
         private OcclusionSettings _settings;
-        private RTHandle _depthRT;
-        private FilteringSettings _filteringSettings;
-        private ShaderTagId _shaderTagId = new ShaderTagId("UnitDepthPass");
+        private List<ShaderTagId> _shaderTagIds = new List<ShaderTagId> { new ShaderTagId("UnitDepthPass") };
 
         private static readonly int DepthDirId = Shader.PropertyToID("_OcclusionDepthDir");
         private static readonly int MinDepthId = Shader.PropertyToID("_OcclusionMinDepth");
         private static readonly int MaxDepthId = Shader.PropertyToID("_OcclusionMaxDepth");
 
+        class PassData
+        {
+            public RendererListHandle rendererListHandle;
+            public Vector4 depthDir;
+            public float minDepth;
+            public float maxDepth;
+        }
+
         public UnitDepthPass(OcclusionSettings settings)
         {
             _settings = settings;
-            _filteringSettings = new FilteringSettings(RenderQueueRange.transparent, settings.unitLayer);
         }
 
-        public void Setup(RTHandle depthRT)
+        public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
         {
-            _depthRT = depthRT;
-        }
+            var cameraData = frameData.Get<UniversalCameraData>();
+            var cullResults = frameData.Get<UniversalRenderingData>().cullResults;
+            var lightData = frameData.Get<UniversalLightData>();
 
-        public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
-        {
-            ConfigureTarget(_depthRT);
-            ConfigureClear(ClearFlag.Color, Color.clear);
-        }
+            // 유닛 위치 RT 생성 (XY 좌표 저장)
+            var desc = cameraData.cameraTargetDescriptor;
+            desc.colorFormat = RenderTextureFormat.RGFloat;
+            desc.depthBufferBits = 0;
+            desc.msaaSamples = 1;
 
-        public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
-        {
-            CommandBuffer cmd = CommandBufferPool.Get("UnitDepthPass");
+            var textureDesc = new TextureDesc(desc.width, desc.height)
+            {
+                colorFormat = UnityEngine.Experimental.Rendering.GraphicsFormat.R32G32_SFloat,
+                clearBuffer = true,
+                clearColor = Color.clear,
+                name = "_UnitDepthTex"
+            };
 
-            // 글로벌 셰이더 변수 설정
-            float rad = _settings.projectionAngle * Mathf.Deg2Rad;
-            Vector4 depthDir = new Vector4(Mathf.Cos(rad), Mathf.Sin(rad), 0, 0);
+            TextureHandle unitDepthTex = renderGraph.CreateTexture(textureDesc);
 
-            cmd.SetGlobalVector(DepthDirId, depthDir);
-            cmd.SetGlobalFloat(MinDepthId, _settings.minDepth);
-            cmd.SetGlobalFloat(MaxDepthId, _settings.maxDepth);
+            // OcclusionFrameData에 텍스처 핸들 저장 (다른 패스에서 사용)
+            var occlusionData = frameData.Create<OcclusionFrameData>();
+            occlusionData.unitDepthTexture = unitDepthTex;
 
-            context.ExecuteCommandBuffer(cmd);
-            cmd.Clear();
+            using (var builder = renderGraph.AddRasterRenderPass<PassData>("UnitDepthPass", out var passData))
+            {
+                // 렌더러 리스트 생성
+                var filterSettings = new FilteringSettings(RenderQueueRange.transparent, _settings.unitLayer);
+                var drawSettings = RenderingUtils.CreateDrawingSettings(
+                    _shaderTagIds,
+                    frameData.Get<UniversalRenderingData>(),
+                    cameraData,
+                    lightData,
+                    SortingCriteria.CommonTransparent
+                );
 
-            // 유닛 렌더링
-            var drawingSettings = CreateDrawingSettings(_shaderTagId, ref renderingData, SortingCriteria.CommonTransparent);
-            context.DrawRenderers(renderingData.cullResults, ref drawingSettings, ref _filteringSettings);
+                var param = new RendererListParams(cullResults, drawSettings, filterSettings);
+                passData.rendererListHandle = renderGraph.CreateRendererList(param);
 
-            context.ExecuteCommandBuffer(cmd);
-            CommandBufferPool.Release(cmd);
+                // 셰이더 파라미터 계산
+                float rad = _settings.projectionAngle * Mathf.Deg2Rad;
+                passData.depthDir = new Vector4(Mathf.Cos(rad), Mathf.Sin(rad), 0, 0);
+                passData.minDepth = _settings.minDepth;
+                passData.maxDepth = _settings.maxDepth;
+
+                if (!passData.rendererListHandle.IsValid())
+                    return;
+
+                builder.UseRendererList(passData.rendererListHandle);
+                builder.SetRenderAttachment(unitDepthTex, 0);
+                builder.AllowGlobalStateModification(true);
+
+                builder.SetRenderFunc(static (PassData data, RasterGraphContext context) =>
+                {
+                    // 글로벌 셰이더 변수 설정
+                    context.cmd.SetGlobalVector(DepthDirId, data.depthDir);
+                    context.cmd.SetGlobalFloat(MinDepthId, data.minDepth);
+                    context.cmd.SetGlobalFloat(MaxDepthId, data.maxDepth);
+
+                    // 유닛 렌더링
+                    context.cmd.DrawRendererList(data.rendererListHandle);
+                });
+            }
         }
     }
 
@@ -125,47 +159,70 @@ public class OcclusionRenderFeature : ScriptableRendererFeature
     class WallStencilPass : ScriptableRenderPass
     {
         private OcclusionSettings _settings;
-        private RTHandle _unitDepthRT;
-        private ScriptableRenderer _renderer;
-        private FilteringSettings _filteringSettings;
-        private ShaderTagId _shaderTagId = new ShaderTagId("WallStencilPass");
+        private List<ShaderTagId> _shaderTagIds = new List<ShaderTagId> { new ShaderTagId("WallStencilPass") };
 
         private static readonly int UnitDepthTexId = Shader.PropertyToID("_UnitDepthTex");
+
+        class PassData
+        {
+            public RendererListHandle rendererListHandle;
+            public TextureHandle unitDepthTexture;
+        }
 
         public WallStencilPass(OcclusionSettings settings)
         {
             _settings = settings;
-            _filteringSettings = new FilteringSettings(RenderQueueRange.all, settings.wallLayer);
         }
 
-        public void Setup(RTHandle unitDepthRT, ScriptableRenderer renderer)
+        public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
         {
-            _unitDepthRT = unitDepthRT;
-            _renderer = renderer;
-        }
+            var resourceData = frameData.Get<UniversalResourceData>();
+            var cameraData = frameData.Get<UniversalCameraData>();
+            var renderingData = frameData.Get<UniversalRenderingData>();
+            var lightData = frameData.Get<UniversalLightData>();
+            var cullResults = renderingData.cullResults;
 
-        public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
-        {
-            // 카메라의 컬러+스텐실 버퍼로 타겟 설정
-            ConfigureTarget(_renderer.cameraColorTargetHandle, _renderer.cameraDepthTargetHandle);
-        }
+            // 이전 패스에서 생성한 유닛 깊이 텍스처 가져오기
+            var occlusionData = frameData.Get<OcclusionFrameData>();
+            if (!occlusionData.unitDepthTexture.IsValid())
+                return;
 
-        public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
-        {
-            CommandBuffer cmd = CommandBufferPool.Get("WallStencilPass");
+            using (var builder = renderGraph.AddRasterRenderPass<PassData>("WallStencilPass", out var passData))
+            {
+                // 렌더러 리스트 생성
+                var filterSettings = new FilteringSettings(RenderQueueRange.all, _settings.wallLayer);
+                var drawSettings = RenderingUtils.CreateDrawingSettings(
+                    _shaderTagIds,
+                    renderingData,
+                    cameraData,
+                    lightData,
+                    SortingCriteria.CommonOpaque
+                );
 
-            // 유닛 깊이 텍스처를 글로벌로 설정
-            cmd.SetGlobalTexture(UnitDepthTexId, _unitDepthRT);
+                var param = new RendererListParams(cullResults, drawSettings, filterSettings);
+                passData.rendererListHandle = renderGraph.CreateRendererList(param);
+                passData.unitDepthTexture = occlusionData.unitDepthTexture;
 
-            context.ExecuteCommandBuffer(cmd);
-            cmd.Clear();
+                if (!passData.rendererListHandle.IsValid())
+                    return;
 
-            // 벽 렌더링 (스텐실 마킹)
-            var drawingSettings = CreateDrawingSettings(_shaderTagId, ref renderingData, SortingCriteria.CommonOpaque);
-            context.DrawRenderers(renderingData.cullResults, ref drawingSettings, ref _filteringSettings);
+                builder.UseRendererList(passData.rendererListHandle);
+                builder.UseTexture(passData.unitDepthTexture);
 
-            context.ExecuteCommandBuffer(cmd);
-            CommandBufferPool.Release(cmd);
+                // 카메라의 컬러+깊이(스텐실) 버퍼로 타겟 설정
+                builder.SetRenderAttachment(resourceData.activeColorTexture, 0);
+                builder.SetRenderAttachmentDepth(resourceData.activeDepthTexture, AccessFlags.ReadWrite);
+                builder.AllowGlobalStateModification(true);
+
+                builder.SetRenderFunc(static (PassData data, RasterGraphContext context) =>
+                {
+                    // 유닛 깊이 텍스처를 글로벌로 설정
+                    context.cmd.SetGlobalTexture(UnitDepthTexId, data.unitDepthTexture);
+
+                    // 벽 렌더링 (스텐실 마킹)
+                    context.cmd.DrawRendererList(data.rendererListHandle);
+                });
+            }
         }
     }
 
@@ -175,38 +232,56 @@ public class OcclusionRenderFeature : ScriptableRendererFeature
     class UnitOccludedPass : ScriptableRenderPass
     {
         private OcclusionSettings _settings;
-        private ScriptableRenderer _renderer;
-        private FilteringSettings _filteringSettings;
-        private ShaderTagId _shaderTagId = new ShaderTagId("UnitOccludedPass");
+        private List<ShaderTagId> _shaderTagIds = new List<ShaderTagId> { new ShaderTagId("UnitOccludedPass") };
+
+        class PassData
+        {
+            public RendererListHandle rendererListHandle;
+        }
 
         public UnitOccludedPass(OcclusionSettings settings)
         {
             _settings = settings;
-            _filteringSettings = new FilteringSettings(RenderQueueRange.transparent, settings.unitLayer);
         }
 
-        public void Setup(ScriptableRenderer renderer)
+        public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
         {
-            _renderer = renderer;
-        }
+            var resourceData = frameData.Get<UniversalResourceData>();
+            var cameraData = frameData.Get<UniversalCameraData>();
+            var renderingData = frameData.Get<UniversalRenderingData>();
+            var lightData = frameData.Get<UniversalLightData>();
+            var cullResults = renderingData.cullResults;
 
-        public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
-        {
-            ConfigureTarget(_renderer.cameraColorTargetHandle, _renderer.cameraDepthTargetHandle);
-        }
+            using (var builder = renderGraph.AddRasterRenderPass<PassData>("UnitOccludedPass", out var passData))
+            {
+                // 렌더러 리스트 생성
+                var filterSettings = new FilteringSettings(RenderQueueRange.transparent, _settings.unitLayer);
+                var drawSettings = RenderingUtils.CreateDrawingSettings(
+                    _shaderTagIds,
+                    renderingData,
+                    cameraData,
+                    lightData,
+                    SortingCriteria.CommonTransparent
+                );
 
-        public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
-        {
-            CommandBuffer cmd = CommandBufferPool.Get("UnitOccludedPass");
-            context.ExecuteCommandBuffer(cmd);
-            cmd.Clear();
+                var param = new RendererListParams(cullResults, drawSettings, filterSettings);
+                passData.rendererListHandle = renderGraph.CreateRendererList(param);
 
-            // 가려진 유닛 렌더링
-            var drawingSettings = CreateDrawingSettings(_shaderTagId, ref renderingData, SortingCriteria.CommonTransparent);
-            context.DrawRenderers(renderingData.cullResults, ref drawingSettings, ref _filteringSettings);
+                if (!passData.rendererListHandle.IsValid())
+                    return;
 
-            context.ExecuteCommandBuffer(cmd);
-            CommandBufferPool.Release(cmd);
+                builder.UseRendererList(passData.rendererListHandle);
+
+                // 카메라의 컬러+깊이(스텐실) 버퍼로 타겟 설정
+                builder.SetRenderAttachment(resourceData.activeColorTexture, 0);
+                builder.SetRenderAttachmentDepth(resourceData.activeDepthTexture, AccessFlags.Read);
+
+                builder.SetRenderFunc(static (PassData data, RasterGraphContext context) =>
+                {
+                    // 가려진 유닛 렌더링 (스텐실=1인 영역에서만)
+                    context.cmd.DrawRendererList(data.rendererListHandle);
+                });
+            }
         }
     }
 }
