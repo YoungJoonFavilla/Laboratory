@@ -410,7 +410,6 @@ GameObject:
   - component: {fileID: 254614288}
   - component: {fileID: 254614287}
   - component: {fileID: 254614286}
-  - component: {fileID: 254614285}
   - component: {fileID: 254614289}
   - component: {fileID: 254614290}
   m_Layer: 7
@@ -436,19 +435,6 @@ Transform:
   - {fileID: 1690438354}
   m_Father: {fileID: 419364669}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &254614285
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 254614283}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e744c2752733ead4bb721786f5ad3ac4, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::UnitOccludable
-  _depthOffset: 0
 --- !u!33 &254614286
 MeshFilter:
   m_ObjectHideFlags: 0
@@ -815,7 +801,6 @@ GameObject:
   - component: {fileID: 571667716}
   - component: {fileID: 571667715}
   - component: {fileID: 571667714}
-  - component: {fileID: 571667713}
   - component: {fileID: 571667717}
   m_Layer: 7
   m_Name: Avatar
@@ -839,19 +824,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 419364669}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &571667713
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 571667711}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e744c2752733ead4bb721786f5ad3ac4, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::UnitOccludable
-  _depthOffset: 0
 --- !u!33 &571667714
 MeshFilter:
   m_ObjectHideFlags: 0

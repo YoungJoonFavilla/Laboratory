@@ -14,11 +14,6 @@ public class OcclusionRenderFeature : ScriptableRendererFeature
         public RenderPassEvent unitOccludedPassEvent = RenderPassEvent.AfterRenderingTransparents;
         public LayerMask unitLayer = -1;
         public LayerMask wallLayer = -1;
-
-        [Header("Depth Settings")]
-        public float projectionAngle = OccConstant.DEFAULT_NORMAL_ANGLE;
-        public float minDepth = -50f;
-        public float maxDepth = 50f;
     }
 
     // 패스 간 데이터 공유를 위한 ContextItem
@@ -68,16 +63,9 @@ public class OcclusionRenderFeature : ScriptableRendererFeature
         private OcclusionSettings _settings;
         private List<ShaderTagId> _shaderTagIds = new List<ShaderTagId> { new ShaderTagId("UnitDepthPass") };
 
-        private static readonly int DepthDirId = Shader.PropertyToID("_OcclusionDepthDir");
-        private static readonly int MinDepthId = Shader.PropertyToID("_OcclusionMinDepth");
-        private static readonly int MaxDepthId = Shader.PropertyToID("_OcclusionMaxDepth");
-
         class PassData
         {
             public RendererListHandle rendererListHandle;
-            public Vector4 depthDir;
-            public float minDepth;
-            public float maxDepth;
         }
 
         public UnitDepthPass(OcclusionSettings settings)
@@ -126,27 +114,14 @@ public class OcclusionRenderFeature : ScriptableRendererFeature
                 var param = new RendererListParams(cullResults, drawSettings, filterSettings);
                 passData.rendererListHandle = renderGraph.CreateRendererList(param);
 
-                // 셰이더 파라미터 계산
-                float rad = _settings.projectionAngle * Mathf.Deg2Rad;
-                passData.depthDir = new Vector4(Mathf.Cos(rad), Mathf.Sin(rad), 0, 0);
-                passData.minDepth = _settings.minDepth;
-                passData.maxDepth = _settings.maxDepth;
-
                 if (!passData.rendererListHandle.IsValid())
                     return;
 
                 builder.UseRendererList(passData.rendererListHandle);
                 builder.SetRenderAttachment(unitDepthTex, 0);
-                builder.AllowGlobalStateModification(true);
 
                 builder.SetRenderFunc(static (PassData data, RasterGraphContext context) =>
                 {
-                    // 글로벌 셰이더 변수 설정
-                    context.cmd.SetGlobalVector(DepthDirId, data.depthDir);
-                    context.cmd.SetGlobalFloat(MinDepthId, data.minDepth);
-                    context.cmd.SetGlobalFloat(MaxDepthId, data.maxDepth);
-
-                    // 유닛 렌더링
                     context.cmd.DrawRendererList(data.rendererListHandle);
                 });
             }
